@@ -3,6 +3,7 @@ from pydantic import BaseModel
 
 from backend.app.config import get_settings
 from backend.app.graph.graph_store import GraphStore
+from backend.app.graph.models import KnowledgeGraph, RepoMeta
 from backend.app.services.benchmark import BenchmarkService
 
 router = APIRouter()
@@ -31,12 +32,14 @@ def post_benchmark(request: BenchmarkRequest | None = None) -> dict[str, str]:
 
 @router.get("/benchmark/results")
 def get_benchmark_results() -> list[dict[str, object]]:
-    return BenchmarkService(GraphStore.load(get_settings().devonboard_graph_path).graph).list_runs()
+    empty_graph = KnowledgeGraph(repo=RepoMeta(name="demo", path="."))
+    return BenchmarkService(empty_graph).list_runs()
 
 
 @router.get("/benchmark/results/{run_id}")
 def get_benchmark_run(run_id: str) -> dict[str, object]:
-    run = BenchmarkService(GraphStore.load(get_settings().devonboard_graph_path).graph).get_run(run_id)
+    empty_graph = KnowledgeGraph(repo=RepoMeta(name="demo", path="."))
+    run = BenchmarkService(empty_graph).get_run(run_id)
     if run is None:
         raise HTTPException(status_code=404, detail=f"Benchmark run not found: {run_id}")
     return run
