@@ -1,0 +1,48 @@
+import json
+
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, Field
+
+from backend.app.config import get_settings
+from backend.app.graph.graph_store import GraphStore
+from backend.app.services.retrieval import RetrievalService
+
+router = APIRouter()
+
+
+class QueryRequest(BaseModel):
+    query: str = Field(min_length=1)
+    mode: str = "auto"
+    node_ids: list[str] = Field(default_factory=list)
+    allow_external_llm_for_private_repo: bool = False
+
+
+@router.post("/query")
+def post_query(request: QueryRequest) -> dict[str, object]:
+    graph = _load_graph()
+    return RetrievalService(graph).answer(
+        query=request.query,
+        mode=request.mode,
+        node_ids=request.node_ids,
+    ).as_dict()
+
+
+@router.post("/query/stream")
+def post_query_stream(request: QueryRequest) -> StreamingResponse:
+    result = post_query(request)
+
+    def events():
+        yield f"event: route\ndata: {json.dumps({'route': result['route']})}\n\n"
+        yield f"event: answer\ndata: {json.dumps({'answer': result['answer']})}\n\n"
+        yield f"event: citations\ndata: {json.dumps({'citations': result['citations']})}\n\n"
+        yield "event: done\ndata: {}\n\n"
+
+    return StreamingResponse(events(), media_type="text/event-stream")
+
+
+def _load_graph():
+    settings = get_settings()
+    if not settings.devonboard_graph_path.exists():
+        raise HTTPException(status_code=404, detail="No graph found. Run scan to get started.")
+    return GraphStore.load(settings.devonboard_graph_path).graph

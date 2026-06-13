@@ -8,6 +8,7 @@ from backend.app.graph.models import RepoMeta
 from backend.app.ingest.git_extractor import GitHistoryIngestor
 from backend.app.main import health
 from backend.app.scanner.structure_scanner import StructureScanner
+from backend.app.services.retrieval import RetrievalService
 
 
 def main() -> None:
@@ -46,8 +47,14 @@ def main() -> None:
         loaded.graph.node_by_id(file_id("main.go"))
         if not any(node.type == "source" for node in loaded.graph.nodes):
             raise SystemExit("history ingest did not create source nodes")
+        result = RetrievalService(loaded.graph).answer(
+            "Is it safe to refactor main?", mode="auto", node_ids=[]
+        )
+        if not result.citations:
+            raise SystemExit("query did not return citations")
         print("backend smoke: scan graph ok")
         print("backend smoke: history ingest ok")
+        print("backend smoke: cited query ok")
 
 
 if __name__ == "__main__":
