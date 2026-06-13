@@ -1,0 +1,27 @@
+.PHONY: install test test-backend test-frontend build dev up e2e
+
+install:
+	uv sync --dev
+	npm install
+
+test: test-backend test-frontend
+
+test-backend:
+	uv run pytest
+
+test-frontend:
+	npm test
+
+build:
+	npm run build
+
+dev:
+	uv run uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
+
+up:
+	docker compose up --build
+
+e2e:
+	uv run pytest
+	npm test
+	npm run build

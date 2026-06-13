@@ -1,1 +1,17 @@
 .agent/
+.env
+.env.*
+!.env.example
+target_repo/
+devonboard/
+benchmark/results/
+.venv/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+node_modules/
+.next/
+out/
+coverage/
+playwright-report/
+test-results/
