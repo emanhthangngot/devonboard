@@ -39,6 +39,7 @@ Benchmark View
 - `QueryPanel`: mode selector, input, streamed answer.
 - `CitationCard`: file, commit, PR, issue, claim evidence.
 - `BenchmarkPanel`: stored benchmark runs.
+- `EvidencePackPanel`: copyable PR review and AI-agent context packs.
 
 ---
 
@@ -93,6 +94,7 @@ Required controls:
 - Mark an answer as unsupported or not useful.
 - Retry with a narrower scope when a query is too broad.
 - Copy an evidence pack for PR review or team discussion.
+- Export evidence-only context for coding agents without secrets or unsupported rationale.
 
 Required warning states:
 
@@ -101,3 +103,4 @@ Required warning states:
 - Stale graph or partial ingest.
 - History unavailable because GitHub metadata could not be fetched.
 - Answer includes inferred structure but no direct historical rationale.
+- External LLM disabled because repository data is private and opt-in was not granted.

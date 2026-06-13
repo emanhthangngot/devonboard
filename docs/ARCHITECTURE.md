@@ -140,6 +140,7 @@ POST /query
 GET  /query/stream
 GET  /graph
 GET  /graph/node/{id}/history
+POST /evidence-packs
 POST /benchmark/run
 GET  /benchmark/results
 ```
@@ -207,6 +208,16 @@ user query
   -> citations + answer
 ```
 
+### Evidence Pack
+
+```text
+node ids / changed files / query
+  -> retrieve structural and historical evidence
+  -> filter secrets, generated files, vendor files, unsupported claims
+  -> assemble copyable Markdown
+  -> citations + warnings
+```
+
 ---
 
 ## 6. Design Decisions
@@ -239,6 +250,8 @@ Multi-repo and enterprise permissions add product surface that is not needed for
 | LLM extraction uncertain | Store source evidence only; skip claim |
 | Vector DB unavailable | Use graph-only retrieval |
 | Query too broad | Ask for clarification or return top subsystems with caveat |
+| Private repo without external LLM opt-in | Use evidence-only retrieval/export |
+| Secret/generated/vendor source detected | Exclude from AI context and report skipped source count |
 
 ---
 

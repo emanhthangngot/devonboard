@@ -13,7 +13,7 @@
 - [ ] Update `05_use_cases/`.
 - [ ] Add `docs/PROTOTYPE_PLAN.md`, `docs/ROADMAP.md`, and `docs/ARTIFACT_ALIGNMENT.md`.
 - [ ] Add defensive UX and human-verification requirements.
-- [ ] Audit all Markdown files for unresolved scaffold text and stale positioning.
+- [ ] Audit all Markdown files for unresolved template residue and stale positioning.
 
 **Checkpoint:** no public Markdown file frames DevOnboard as dependent on another project.
 

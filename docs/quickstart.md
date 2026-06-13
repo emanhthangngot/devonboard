@@ -29,6 +29,9 @@ DEVONBOARD_GRAPH_PATH=./devonboard/knowledge-graph.json
 GITHUB_TOKEN=...
 GEMINI_API_KEY=...
 MAX_COMMITS_INGEST=500
+TARGET_REPO_BRANCH=dev
+TARGET_REPO_COMMIT=<pin-for-demo>
+ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO=false
 ```
 
 Clone target repo:
@@ -74,6 +77,8 @@ http://localhost:3000
 How does the agent pipeline execute a tool call?
 Why was progressive memory loading chosen?
 Is it safe to refactor ProviderAdapter?
+What should I inspect before reviewing changes touching ProviderAdapter?
+Create a cited context pack for an agent modifying the provider subsystem.
 ```
 
 ---
@@ -100,3 +105,5 @@ benchmark/results/<timestamp>.json
 | No history evidence | run `devonboard ingest-history` |
 | GitHub rate limit | reduce `MAX_COMMITS_INGEST` or add token |
 | LLM unavailable | inspect retrieved evidence directly |
+| Private repo with external LLM disabled | use evidence-only context and citations |
+| Generated/vendor files skipped | review `EXCLUDE_PATTERNS` before scan |

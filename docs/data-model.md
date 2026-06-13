@@ -7,11 +7,11 @@
 ```typescript
 interface KnowledgeGraph {
   version: string;
-  generatedAt: string;
+  generated_at: string;
   repo: RepoMeta;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  benchmarkRuns?: BenchmarkRunSummary[];
+  benchmark_runs?: BenchmarkRunSummary[];
 }
 ```
 
@@ -163,7 +163,7 @@ class RouteDecision(BaseModel):
 
 class Evidence(BaseModel):
     node_id: str
-    type: str
+    type: Literal["file", "function", "commit", "pr", "issue", "review", "claim", "entity"]
     label: str
     summary: str
     url: str | None = None
@@ -175,8 +175,16 @@ class QueryResponse(BaseModel):
     structural: list[Evidence] = []
     historical: list[Evidence] = []
     citations: list[Evidence] = []
+    warnings: list[str] = []
     retrieval_ms: int
     synthesis_ms: int
+
+class EvidencePack(BaseModel):
+    purpose: Literal["pr_review", "ai_agent_context"]
+    markdown: str
+    citations: list[Evidence]
+    warnings: list[str] = []
+    excluded_sources: list[str] = []
 ```
 
 ---
@@ -188,16 +196,19 @@ class MetricRow(BaseModel):
     query_id: int
     query_text: str
     mode: Literal["devonboard", "plain_agent"]
-    wall_clock_ms: int
+    time_to_useful_answer_ms: int
     citations_count: int
     evidence_count: int
     input_tokens: int | None = None
     output_tokens: int | None = None
-    quality_score: int | None = None
+    evidence_usefulness_score: int | None = None
+    human_quality_score: int | None = None
 
 class BenchmarkRun(BaseModel):
     run_id: str
     repo: str
+    target_branch: str
+    target_commit: str | None = None
     rows: list[MetricRow]
     created_at: datetime
 ```

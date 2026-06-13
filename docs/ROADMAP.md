@@ -14,12 +14,16 @@ Capabilities:
 - History/Why inspector.
 - Cited structural, historical, and hybrid answers.
 - Benchmark snapshot.
+- Copyable PR review evidence pack.
+- Evidence-only AI-agent context pack.
 
 Success metrics:
 
 - Three demo questions answered with citations.
 - Historical rationale evidence visible from at least one selected code node.
 - User can verify a cited claim within 60 seconds.
+- Reviewer can copy an evidence pack for one prepared PR scenario.
+- Agent context export includes citations and excludes secrets/generated/vendor files.
 
 ---
 

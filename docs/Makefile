@@ -3,28 +3,27 @@
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-15s\033[0m %s\n", $$1, $$2}'
 
-setup: ## Clone goclaw, install CodeGraph, create .env
-	@echo "→ Cloning goclaw..."
+setup: ## Clone pinned demo repo and create .env
+	@echo "→ Cloning prepared demo repo..."
 	@if [ ! -d "target_repo" ]; then \
 		git clone -b dev https://github.com/nextlevelbuilder/goclaw target_repo/; \
 	else \
 		echo "  target_repo/ already exists, skipping clone"; \
 	fi
-	@echo "→ Installing CodeGraph CLI..."
-	npm install -g @colbymchenry/codegraph
-	@echo "→ Initializing CodeGraph index (this takes ~3-5 min for goclaw)..."
-	cd target_repo && codegraph init -i
+	@if [ -n "$$TARGET_REPO_COMMIT" ]; then \
+		cd target_repo && git checkout "$$TARGET_REPO_COMMIT"; \
+	fi
 	@echo "→ Creating .env from .env.example..."
 	@if [ ! -f ".env" ]; then cp .env.example .env; echo "  Created .env — fill in GEMINI_API_KEY"; fi
 	@echo "✓ Setup complete. Edit .env with your API keys, then run: make ingest"
 
-ingest: ## Run git history + GitHub API ingest into Qdrant
-	@echo "→ Starting Qdrant (if not running)..."
-	@docker start qdrant 2>/dev/null || docker run -d -p 6333:6333 --name qdrant qdrant/qdrant
-	@echo "→ Running ingest pipeline..."
+ingest: ## Run DevOnboard scan + history ingest into knowledge graph
+	@echo "→ Running DevOnboard structure scan..."
 	cd backend && pip install -r requirements.txt -q && \
-		python -m app.ingest.run --max-commits 500
-	@echo "✓ Ingest complete. Check Qdrant at http://localhost:6333/dashboard"
+		python -m app.scan.run --repo ../target_repo
+	@echo "→ Running history ingest..."
+	cd backend && python -m app.ingest.run --repo ../target_repo --max-commits 500
+	@echo "✓ Ingest complete. Check devonboard/knowledge-graph.json"
 
 dev: ## Start backend + frontend in watch mode (no Docker)
 	@echo "→ Starting backend (port 8000)..."
@@ -51,11 +50,11 @@ test: ## Run backend tests + frontend type-check
 	@echo "→ Frontend type-check..."
 	cd frontend && npx tsc --noEmit
 
-clean: ## Remove Qdrant data, CodeGraph index, benchmark results
+clean: ## Remove optional Qdrant data, generated graph, benchmark results
 	@echo "→ Stopping and removing Qdrant container..."
 	docker stop qdrant && docker rm qdrant || true
-	@echo "→ Removing CodeGraph index..."
-	rm -rf target_repo/.codegraph/
+	@echo "→ Removing generated graph..."
+	rm -f devonboard/knowledge-graph.json
 	@echo "→ Clearing benchmark results..."
 	rm -f benchmark/results/*.json
-	@echo "✓ Clean complete (target_repo/ kept, re-run 'make setup' to re-index)"
+	@echo "✓ Clean complete (target_repo/ kept, re-run 'make ingest' to rebuild)"

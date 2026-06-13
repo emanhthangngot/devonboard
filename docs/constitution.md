@@ -24,6 +24,8 @@ DevOnboard helps engineering teams preserve and retrieve codebase institutional 
 
 **P6 — Demo reliability.** MVP must work on a prepared repository with bounded scan/ingest size and deterministic benchmark queries.
 
+**P7 — Data handling by default.** DevOnboard must not send secrets, generated/vendor artifacts, or full private repositories to external LLMs. External synthesis uses retrieved snippets only, and private/proprietary repositories require explicit opt-in or evidence-only mode.
+
 ---
 
 ## 3. Technology Governance
@@ -51,6 +53,8 @@ DevOnboard helps engineering teams preserve and retrieve codebase institutional 
 
 **Q5 — No hardcoded secrets.** API keys and tokens live in `.env`; examples use non-secret sample values.
 
+**Q6 — Contract consistency.** OpenAPI, backend docs, data models, and frontend expectations must describe the same endpoints, fields, and error semantics.
+
 ---
 
 ## 5. Scope Boundaries
@@ -59,3 +63,4 @@ DevOnboard helps engineering teams preserve and retrieve codebase institutional 
 - Public or locally available GitHub metadata only.
 - No automatic code modification.
 - No production authorization, billing, or enterprise admin controls in MVP.
+- No default external LLM processing for private repositories without user opt-in.

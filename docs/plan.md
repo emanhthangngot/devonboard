@@ -29,7 +29,7 @@ Build DevOnboard as a standalone local web app that scans a target repository, i
 - Replace external-integration language with product-native graph/provenance terminology.
 - Align context pack files from `00_problem_statement.md` through `05_use_cases/`.
 - Add dedicated prototype, roadmap, and artifact-alignment documents.
-- Audit every Markdown file for unresolved scaffold text, stale positioning, and artifact-boundary violations.
+- Audit every Markdown file for unresolved template residue, stale positioning, and artifact-boundary violations.
 
 ---
 

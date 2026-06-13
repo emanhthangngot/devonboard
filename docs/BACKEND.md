@@ -23,6 +23,7 @@ Core routers:
 - `GET /query/stream`
 - `GET /graph`
 - `GET /graph/node/{id}/history`
+- `POST /evidence-packs`
 - `POST /benchmark/run`
 - `GET /benchmark/results`
 
@@ -93,5 +94,11 @@ Benchmark service:
 
 - loads fixed query set;
 - runs DevOnboard and plain-agent modes;
-- records latency, evidence count, citation count, token estimates, and quality scores;
+- records time-to-useful-answer, evidence count, citation count, token estimates, evidence usefulness score, and human quality score;
 - writes immutable JSON results.
+
+Evidence pack service:
+
+- creates PR review and AI-agent context packs from graph evidence;
+- excludes secrets, generated/vendor files, and unsupported rationale;
+- returns copyable Markdown plus citations and warnings.

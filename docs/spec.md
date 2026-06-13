@@ -106,12 +106,37 @@ The product is valuable because it answers questions plain code search cannot:
 - Results are preserved so demo reviewers can compare runs.
 - The benchmark explains whether DevOnboard improved trust and verification, not just speed.
 
+### US-07 — PR Review Preparation
+
+**As** a reviewer,  
+**I want to** generate a cited evidence pack for unfamiliar files in a pull request  
+**So that** I can review with historical context before commenting.
+
+**Acceptance criteria:**
+- The evidence pack lists touched files or nodes, linked history, extracted claims, risks, and unknowns.
+- The pack can be copied for PR review or team discussion.
+- Missing GitHub metadata or private-source limitations are shown explicitly.
+- The pack does not claim review safety without cited evidence.
+
+### US-08 — AI-Agent Context Pack
+
+**As** an engineer using a coding agent,  
+**I want to** export grounded repo context and constraints  
+**So that** the agent does not rely only on local snippets or unsupported assumptions.
+
+**Acceptance criteria:**
+- The export includes relevant structural evidence, historical evidence, constraints, and citations.
+- The export excludes secrets, generated/vendor files, and unsupported rationale.
+- Private-repo exports require explicit external-LLM opt-in or evidence-only mode.
+- The export labels stale or partial graph context.
+
 ---
 
 ## Success Criteria
 
 - DevOnboard reads as a standalone product with its own graph, retrieval, UI, and benchmark.
 - The core demo can answer one structural, one historical, and one hybrid question with citations.
+- The demo can produce one PR review evidence pack and one AI-agent context pack.
 - The graph is inspectable as JSON and can be rebuilt from repo + git/GitHub data.
 - Product artifacts outside `docs/` align with this same problem and product story.
 
@@ -124,3 +149,4 @@ The product is valuable because it answers questions plain code search cannot:
 - Not a production multi-tenant SaaS for MVP.
 - Not a replacement for human code review.
 - Not an autonomous code-changing agent.
+- Not a tool that uploads private source code to third-party LLMs by default.

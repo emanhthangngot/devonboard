@@ -15,6 +15,8 @@ AI must not invent design history or replace evidence retrieval.
 
 AI is a copilot, not an autopilot. It helps users inspect evidence and form decisions; it never makes code changes or hides uncertainty.
 
+External LLM calls must use the smallest retrieved context needed for the answer. Secrets, `.env` files, generated artifacts, vendor directories, and full private repositories are excluded from AI context by default.
+
 ---
 
 ## 2. Query Routing
@@ -109,6 +111,7 @@ The AI layer must refuse or downgrade output when:
 - evidence is stale or partial and the user asks for high-confidence guidance;
 - the answer would require changing code automatically;
 - the prompt asks for hidden assumptions not supported by repository evidence.
+- the requested context would expose private/proprietary source to an external LLM without explicit opt-in.
 
 In these cases, the answer should state what evidence is missing and suggest the next verification step.
 
@@ -117,3 +120,11 @@ In these cases, the answer should state what evidence is missing and suggest the
 ## 6. Benchmark Baseline
 
 Plain-agent mode receives only README and file listing context. DevOnboard mode receives graph-retrieved structural and historical evidence. Compare the outputs by citation quality, evidence coverage, and answer usefulness.
+
+Use this fixed MVP query set:
+
+1. Structural onboarding: "How does the agent pipeline execute a tool call?"
+2. Design rationale: "Why was progressive memory loading chosen?"
+3. Refactor risk: "Is it safe to refactor ProviderAdapter?"
+4. PR review prep: "What should I inspect before reviewing changes touching ProviderAdapter?"
+5. AI-agent context: "Create a cited context pack for an agent modifying the provider subsystem."

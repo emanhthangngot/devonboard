@@ -37,6 +37,9 @@ GEMINI_API_KEY=...
 MAX_COMMITS_INGEST=500
 QDRANT_URL=http://localhost:6333
 BACKEND_URL=http://localhost:8000
+TARGET_REPO_BRANCH=dev
+TARGET_REPO_COMMIT=<pin-for-demo>
+ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO=false
 ```
 
 ---
@@ -84,8 +87,10 @@ POST /query or GET /query/stream
 | Missing target repo | prompt setup action |
 | Missing GitHub token | run commit-only ingest |
 | LLM unavailable | return retrieved evidence without synthesis if possible |
+| External LLM disabled for private repo | run evidence-only retrieval and export |
 | Graph missing | ask user to run scan |
 | No evidence | show explicit empty state |
+| Secret or generated/vendor file detected | exclude from AI context and show skipped-source count |
 
 ---
 

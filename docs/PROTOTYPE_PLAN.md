@@ -18,6 +18,7 @@ load prepared repo context
   -> inspect History/Why evidence
   -> ask a hybrid refactor-risk question
   -> verify citations/raw evidence
+  -> copy a bounded evidence pack for review or agent context
 ```
 
 ---
@@ -29,6 +30,7 @@ load prepared repo context
 - Node inspector with History/Why panel.
 - Hybrid answer panel with citations.
 - Benchmark snapshot comparing DevOnboard with a plain answer.
+- Evidence pack preview with copy/export action.
 
 ---
 
@@ -41,6 +43,7 @@ load prepared repo context
 - Settings screens beyond basic repo status.
 - Full graph editing.
 - Automatic code modification.
+- Uploading private source to external LLMs without explicit opt-in.
 
 ---
 
@@ -49,3 +52,4 @@ load prepared repo context
 - A user can verify one historical rationale claim from raw evidence within 60 seconds.
 - A user can identify at least one affected code area and one linked historical evidence item for a refactor-risk question.
 - A user can explain why the DevOnboard answer is more trustworthy than a plain uncited answer.
+- A user can copy a cited evidence pack that excludes secrets, generated files, vendor files, and unsupported rationale.

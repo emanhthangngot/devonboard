@@ -2,22 +2,125 @@
   "openapi": "3.0.3",
   "info": {
     "title": "DevOnboard API",
-    "description": "Hybrid RAG + CodeGraph Q&A system for goclaw codebase",
+    "description": "Local codebase institutional-memory API for scan, history ingest, graph retrieval, cited answers, evidence packs, and benchmarks.",
     "version": "0.1.0"
   },
   "servers": [
-    { "url": "http://localhost:8000", "description": "Local development" }
+    {
+      "url": "http://localhost:8000",
+      "description": "Local development"
+    }
   ],
   "paths": {
+    "/scan": {
+      "post": {
+        "summary": "Start repository structure scan",
+        "operationId": "postScan",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ScanRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Scan started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/APIError"
+          }
+        }
+      }
+    },
+    "/scan/status": {
+      "get": {
+        "summary": "Get structure scan status",
+        "operationId": "getScanStatus",
+        "responses": {
+          "200": {
+            "description": "Current scan progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ingest/history": {
+      "post": {
+        "summary": "Start git and GitHub history ingest",
+        "operationId": "postIngestHistory",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IngestHistoryRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "History ingest started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          },
+          "422": {
+            "$ref": "#/components/responses/APIError"
+          }
+        }
+      }
+    },
+    "/ingest/history/status": {
+      "get": {
+        "summary": "Get history ingest status",
+        "operationId": "getIngestHistoryStatus",
+        "responses": {
+          "200": {
+            "description": "Current history ingest progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobStatus"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/query": {
       "post": {
-        "summary": "Submit a query (full response, non-streaming)",
+        "summary": "Submit a cited onboarding or refactor-risk query",
         "operationId": "postQuery",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/QueryRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/QueryRequest"
+              }
             }
           }
         },
@@ -26,23 +129,31 @@
             "description": "Full query response with citations",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/QueryResponse" }
+                "schema": {
+                  "$ref": "#/components/schemas/QueryResponse"
+                }
               }
             }
+          },
+          "422": {
+            "$ref": "#/components/responses/APIError"
           }
         }
       }
     },
     "/query/stream": {
       "get": {
-        "summary": "Stream a query response via SSE",
-        "operationId": "streamQuery",
+        "summary": "Stream a cited query response via SSE",
+        "operationId": "getQueryStream",
         "parameters": [
           {
             "name": "q",
             "in": "query",
             "required": true,
-            "schema": { "type": "string" },
+            "schema": {
+              "type": "string",
+              "minLength": 1
+            },
             "description": "The user query"
           },
           {
@@ -50,9 +161,7 @@
             "in": "query",
             "required": false,
             "schema": {
-              "type": "string",
-              "enum": ["auto", "structural", "historical", "hybrid"],
-              "default": "auto"
+              "$ref": "#/components/schemas/QueryMode"
             }
           }
         ],
@@ -61,63 +170,110 @@
             "description": "Server-Sent Events stream of StreamChunk objects",
             "content": {
               "text/event-stream": {
-                "schema": { "$ref": "#/components/schemas/StreamChunk" }
+                "schema": {
+                  "$ref": "#/components/schemas/StreamChunk"
+                }
               }
             }
           }
         }
       }
     },
-    "/ingest/start": {
+    "/graph": {
+      "get": {
+        "summary": "Get the inspectable knowledge graph",
+        "operationId": "getGraph",
+        "responses": {
+          "200": {
+            "description": "Knowledge graph",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeGraph"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/APIError"
+          }
+        }
+      }
+    },
+    "/graph/node/{id}/history": {
+      "get": {
+        "summary": "Get History/Why evidence for a graph node",
+        "operationId": "getGraphNodeHistory",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Node history and rationale evidence",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/NodeHistory"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/APIError"
+          }
+        }
+      }
+    },
+    "/evidence-packs": {
       "post": {
-        "summary": "Start the git history ingest pipeline",
-        "operationId": "startIngest",
+        "summary": "Create a cited PR review or AI-agent context pack",
+        "operationId": "postEvidencePack",
         "requestBody": {
-          "required": false,
+          "required": true,
           "content": {
             "application/json": {
-              "schema": { "$ref": "#/components/schemas/IngestRequest" }
+              "schema": {
+                "$ref": "#/components/schemas/EvidencePackRequest"
+              }
             }
           }
         },
         "responses": {
-          "202": {
-            "description": "Ingest started",
-            "content": {
-              "application/json": {
-                "schema": { "$ref": "#/components/schemas/IngestStatus" }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/ingest/status": {
-      "get": {
-        "summary": "Get current ingest status",
-        "operationId": "getIngestStatus",
-        "responses": {
           "200": {
-            "description": "Current ingest progress",
+            "description": "Copyable evidence pack",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/IngestStatus" }
+                "schema": {
+                  "$ref": "#/components/schemas/EvidencePack"
+                }
               }
             }
+          },
+          "422": {
+            "$ref": "#/components/responses/APIError"
           }
         }
       }
     },
     "/benchmark/run": {
       "post": {
-        "summary": "Run benchmark comparison (DevOnboard vs plain agent)",
-        "operationId": "runBenchmark",
+        "summary": "Run fixed benchmark comparison",
+        "operationId": "postBenchmarkRun",
         "responses": {
           "202": {
             "description": "Benchmark started",
             "content": {
               "application/json": {
-                "schema": { "type": "object", "properties": { "run_id": { "type": "string" } } }
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkRunStarted"
+                }
               }
             }
           }
@@ -126,16 +282,18 @@
     },
     "/benchmark/results": {
       "get": {
-        "summary": "List all saved benchmark runs",
-        "operationId": "listBenchmarkResults",
+        "summary": "List saved benchmark runs",
+        "operationId": "getBenchmarkResults",
         "responses": {
           "200": {
-            "description": "List of benchmark runs",
+            "description": "Saved benchmark runs",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
-                  "items": { "$ref": "#/components/schemas/BenchmarkRun" }
+                  "items": {
+                    "$ref": "#/components/schemas/BenchmarkRun"
+                  }
                 }
               }
             }
@@ -145,19 +303,31 @@
     },
     "/benchmark/results/{run_id}": {
       "get": {
-        "summary": "Get a specific benchmark run",
+        "summary": "Get a saved benchmark run",
         "operationId": "getBenchmarkRun",
         "parameters": [
-          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+          {
+            "name": "run_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
         ],
         "responses": {
           "200": {
-            "description": "Benchmark run data",
+            "description": "Benchmark run",
             "content": {
               "application/json": {
-                "schema": { "$ref": "#/components/schemas/BenchmarkRun" }
+                "schema": {
+                  "$ref": "#/components/schemas/BenchmarkRun"
+                }
               }
             }
+          },
+          "404": {
+            "$ref": "#/components/responses/APIError"
           }
         }
       }
@@ -165,19 +335,14 @@
     "/health": {
       "get": {
         "summary": "Health check",
-        "operationId": "healthCheck",
+        "operationId": "getHealth",
         "responses": {
           "200": {
             "description": "Service health",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "properties": {
-                    "status": { "type": "string" },
-                    "qdrant": { "type": "boolean" },
-                    "codegraph": { "type": "boolean" }
-                  }
+                  "$ref": "#/components/schemas/HealthStatus"
                 }
               }
             }
@@ -187,31 +352,175 @@
     }
   },
   "components": {
+    "responses": {
+      "APIError": {
+        "description": "Structured API error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/APIError"
+            }
+          }
+        }
+      }
+    },
     "schemas": {
+      "APIError": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {
+            "type": "object",
+            "required": ["code", "message"],
+            "properties": {
+              "code": {
+                "type": "string"
+              },
+              "message": {
+                "type": "string"
+              },
+              "details": {
+                "nullable": true
+              }
+            }
+          }
+        }
+      },
+      "ScanRequest": {
+        "type": "object",
+        "required": ["repo_path"],
+        "properties": {
+          "repo_path": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string",
+            "default": "dev"
+          },
+          "commit": {
+            "type": "string",
+            "nullable": true
+          },
+          "exclude_patterns": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "IngestHistoryRequest": {
+        "type": "object",
+        "properties": {
+          "max_commits": {
+            "type": "integer",
+            "default": 500
+          },
+          "include_pr_comments": {
+            "type": "boolean",
+            "default": true
+          },
+          "allow_external_llm_for_private_repo": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "JobStatus": {
+        "type": "object",
+        "required": ["status", "progress"],
+        "properties": {
+          "status": {
+            "type": "string",
+            "enum": ["idle", "running", "done", "partial", "error"]
+          },
+          "progress": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 100
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      },
+      "QueryMode": {
+        "type": "string",
+        "enum": ["auto", "structural", "historical", "hybrid"],
+        "default": "auto"
+      },
       "QueryRequest": {
         "type": "object",
         "required": ["query"],
         "properties": {
-          "query": { "type": "string", "minLength": 1 },
-          "mode": {
+          "query": {
             "type": "string",
-            "enum": ["auto", "structural", "historical", "hybrid"],
-            "default": "auto"
+            "minLength": 1
+          },
+          "mode": {
+            "$ref": "#/components/schemas/QueryMode"
+          },
+          "allow_external_llm_for_private_repo": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
       "QueryResponse": {
         "type": "object",
+        "required": ["answer", "route", "citations"],
         "properties": {
-          "answer": { "type": "string" },
+          "answer": {
+            "type": "string"
+          },
+          "route": {
+            "$ref": "#/components/schemas/QueryMode"
+          },
+          "structural": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "historical": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
           "citations": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/Citation" }
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
           },
-          "route": { "type": "string" },
-          "retrieval_ms": { "type": "integer" },
-          "synthesis_ms": { "type": "integer" },
-          "total_tokens": { "type": "integer" }
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "retrieval_ms": {
+            "type": "integer"
+          },
+          "synthesis_ms": {
+            "type": "integer"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "nullable": true
+          }
         }
       },
       "StreamChunk": {
@@ -219,72 +528,284 @@
         "properties": {
           "type": {
             "type": "string",
-            "enum": ["token", "citation", "metadata", "error", "done"]
+            "enum": ["token", "citation", "metadata", "warning", "error", "done"]
           },
-          "content": { "type": "string" },
-          "citation": { "$ref": "#/components/schemas/Citation" },
-          "metadata": { "$ref": "#/components/schemas/ResponseMetadata" }
-        }
-      },
-      "Citation": {
-        "type": "object",
-        "properties": {
-          "type": { "type": "string", "enum": ["file", "commit", "pr", "issue"] },
-          "label": { "type": "string" },
-          "url": { "type": "string", "nullable": true },
-          "snippet": { "type": "string", "nullable": true }
+          "content": {
+            "type": "string"
+          },
+          "citation": {
+            "$ref": "#/components/schemas/Evidence"
+          },
+          "metadata": {
+            "$ref": "#/components/schemas/ResponseMetadata"
+          }
         }
       },
       "ResponseMetadata": {
         "type": "object",
         "properties": {
-          "route": { "type": "string" },
-          "retrieval_ms": { "type": "integer" },
-          "synthesis_ms": { "type": "integer" },
-          "total_tokens": { "type": "integer" }
+          "route": {
+            "$ref": "#/components/schemas/QueryMode"
+          },
+          "retrieval_ms": {
+            "type": "integer"
+          },
+          "synthesis_ms": {
+            "type": "integer"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "nullable": true
+          }
         }
       },
-      "IngestRequest": {
+      "Evidence": {
         "type": "object",
+        "required": ["node_id", "type", "label", "summary"],
         "properties": {
-          "max_commits": { "type": "integer", "default": 500 },
-          "include_pr_comments": { "type": "boolean", "default": true }
+          "node_id": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": ["file", "function", "commit", "pr", "issue", "review", "claim", "entity"]
+          },
+          "label": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string",
+            "nullable": true
+          },
+          "score": {
+            "type": "number",
+            "nullable": true
+          }
         }
       },
-      "IngestStatus": {
+      "KnowledgeGraph": {
         "type": "object",
+        "required": ["version", "generated_at", "repo", "nodes", "edges"],
         "properties": {
-          "status": { "type": "string", "enum": ["idle", "running", "done", "error"] },
-          "progress": { "type": "integer", "description": "0-100" },
-          "commits_processed": { "type": "integer" },
-          "total_commits": { "type": "integer" },
-          "error": { "type": "string", "nullable": true }
+          "version": {
+            "type": "string"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "repo": {
+            "type": "object"
+          },
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "edges": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "NodeHistory": {
+        "type": "object",
+        "required": ["node_id", "evidence", "claims"],
+        "properties": {
+          "node_id": {
+            "type": "string"
+          },
+          "evidence": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "claims": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "EvidencePackRequest": {
+        "type": "object",
+        "required": ["purpose"],
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "enum": ["pr_review", "ai_agent_context"]
+          },
+          "query": {
+            "type": "string"
+          },
+          "node_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "allow_external_llm_for_private_repo": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "EvidencePack": {
+        "type": "object",
+        "required": ["purpose", "markdown", "citations", "warnings"],
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "enum": ["pr_review", "ai_agent_context"]
+          },
+          "markdown": {
+            "type": "string"
+          },
+          "citations": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Evidence"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "excluded_sources": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "BenchmarkRunStarted": {
+        "type": "object",
+        "required": ["run_id"],
+        "properties": {
+          "run_id": {
+            "type": "string"
+          }
         }
       },
       "BenchmarkRun": {
         "type": "object",
+        "required": ["run_id", "repo", "rows", "created_at"],
         "properties": {
-          "run_id": { "type": "string" },
-          "repo": { "type": "string" },
+          "run_id": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "target_branch": {
+            "type": "string"
+          },
+          "target_commit": {
+            "type": "string",
+            "nullable": true
+          },
           "rows": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/MetricRow" }
+            "items": {
+              "$ref": "#/components/schemas/MetricRow"
+            }
           },
-          "created_at": { "type": "string", "format": "date-time" }
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          }
         }
       },
       "MetricRow": {
         "type": "object",
+        "required": ["query_id", "query_text", "mode", "time_to_useful_answer_ms", "citations_count", "evidence_count"],
         "properties": {
-          "query_id": { "type": "integer" },
-          "query_text": { "type": "string" },
-          "mode": { "type": "string", "enum": ["devonboard", "plain_agent"] },
-          "wall_clock_ms": { "type": "integer" },
-          "tool_calls": { "type": "integer" },
-          "input_tokens": { "type": "integer" },
-          "output_tokens": { "type": "integer" },
-          "answer_length": { "type": "integer" },
-          "quality_score": { "type": "integer", "nullable": true, "minimum": 1, "maximum": 5 }
+          "query_id": {
+            "type": "integer"
+          },
+          "query_text": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": ["devonboard", "plain_agent"]
+          },
+          "time_to_useful_answer_ms": {
+            "type": "integer"
+          },
+          "citations_count": {
+            "type": "integer"
+          },
+          "evidence_count": {
+            "type": "integer"
+          },
+          "input_tokens": {
+            "type": "integer",
+            "nullable": true
+          },
+          "output_tokens": {
+            "type": "integer",
+            "nullable": true
+          },
+          "evidence_usefulness_score": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 5
+          },
+          "human_quality_score": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 5
+          }
+        }
+      },
+      "HealthStatus": {
+        "type": "object",
+        "required": ["status"],
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "graph_exists": {
+            "type": "boolean"
+          },
+          "qdrant": {
+            "type": "boolean"
+          },
+          "llm_available": {
+            "type": "boolean"
+          }
         }
       }
     }
