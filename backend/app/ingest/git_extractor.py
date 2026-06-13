@@ -3,6 +3,7 @@ from pathlib import Path
 
 from backend.app.graph.ids import edge_id, entity_id, file_id, source_commit_id
 from backend.app.graph.models import GraphEdge, GraphNode, KnowledgeGraph
+from backend.app.ingest.rationale_extractor import RationaleExtractor
 
 
 class GitHistoryIngestor:
@@ -14,6 +15,7 @@ class GitHistoryIngestor:
     def ingest(self) -> KnowledgeGraph:
         for sha in self._commit_shas():
             self._ingest_commit(sha)
+        RationaleExtractor(self.graph).extract()
         self.graph.nodes.sort(key=lambda node: node.id)
         self.graph.edges.sort(key=lambda edge: edge.id)
         return self.graph
