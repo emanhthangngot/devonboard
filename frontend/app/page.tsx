@@ -33,17 +33,9 @@ type GraphNode = {
   filePath?: string;
 };
 
-type GraphEdge = {
-  id: string;
-  source: string;
-  target: string;
-  type: string;
-};
-
 type KnowledgeGraph = {
   repo: { name: string; branch: string; commit?: string | null };
   nodes: GraphNode[];
-  edges?: GraphEdge[];
 };
 
 type Turn = {
@@ -84,8 +76,6 @@ export default function Home() {
   const [isAsking, setIsAsking] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
   const [packMarkdown, setPackMarkdown] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<"list" | "visual">("list");
-  const [visLoaded, setVisLoaded] = useState(false);
 
   const graphNodes = useMemo(
     () => (graph?.nodes || []).filter((node) => ["file", "function", "module", "class"].includes(node.type)),
@@ -95,113 +85,6 @@ export default function Home() {
   useEffect(() => {
     loadGraph();
   }, []);
-
-  useEffect(() => {
-    if (viewMode === "visual" && !visLoaded) {
-      const script = document.createElement("script");
-      script.src = "https://unpkg.com/vis-network/standalone/umd/vis-network.min.js";
-      script.async = true;
-      script.onload = () => {
-        setVisLoaded(true);
-      };
-      document.body.appendChild(script);
-    }
-  }, [viewMode, visLoaded]);
-
-  useEffect(() => {
-    if (viewMode === "visual" && visLoaded && graph) {
-      const container = document.getElementById("visual-graph-container");
-      if (!container) return;
-
-      const allowedTypes = ["file", "module", "service", "claim"];
-      
-      const filteredNodes = graph.nodes
-        .filter((node) => allowedTypes.includes(node.type))
-        .slice(0, 150);
-
-      const filteredNodeIds = new Set(filteredNodes.map((n) => n.id));
-
-      const visNodes = filteredNodes.map((node) => ({
-        id: node.id,
-        label: node.name,
-        group: node.type,
-        title: node.summary
-      }));
-
-      const visEdges = (graph.edges || [])
-        .filter((edge) => filteredNodeIds.has(edge.source) && filteredNodeIds.has(edge.target))
-        .slice(0, 200)
-        .map((edge) => ({
-          from: edge.source,
-          to: edge.target,
-          label: edge.type,
-          arrows: "to"
-        }));
-
-      // @ts-ignore
-      const data = {
-        // @ts-ignore
-        nodes: new vis.DataSet(visNodes),
-        // @ts-ignore
-        edges: new vis.DataSet(visEdges)
-      };
-
-      const options = {
-        nodes: {
-          shape: "dot",
-          size: 10,
-          font: {
-            size: 9,
-            color: "#334155"
-          },
-          borderWidth: 1.5
-        },
-        edges: {
-          width: 0.8,
-          color: { color: "#cbd5e1", highlight: "#3b82f6" },
-          smooth: {
-            type: "continuous"
-          }
-        },
-        groups: {
-          file: {
-            color: { background: "#93c5fd", border: "#3b82f6" }
-          },
-          module: {
-            color: { background: "#c7d2fe", border: "#6366f1" }
-          },
-          service: {
-            color: { background: "#fef08a", border: "#ca8a04" }
-          },
-          claim: {
-            color: { background: "#fde047", border: "#eab308" }
-          }
-        },
-        physics: {
-          stabilization: true,
-          barnesHut: {
-            gravitationalConstant: -1500,
-            springConstant: 0.04,
-            springLength: 50
-          }
-        }
-      };
-
-      // @ts-ignore
-      const network = new vis.Network(container, data, options);
-
-      // @ts-ignore
-      network.on("click", function (params) {
-        if (params.nodes.length > 0) {
-          const nodeId = params.nodes[0];
-          const foundNode = graph.nodes.find((n) => n.id === nodeId);
-          if (foundNode) {
-            selectNode(foundNode);
-          }
-        }
-      });
-    }
-  }, [viewMode, visLoaded, graph]);
 
   async function loadGraph() {
     try {
@@ -334,62 +217,27 @@ export default function Home() {
 
       <section className="workspace-grid">
         <aside className="left-panel" aria-label="Graph and file navigation">
-          <div className="panel-header" style={{ marginBottom: '8px' }}>
+          <div className="panel-header">
             <span>Files / Graph</span>
             <Search size={14} aria-hidden="true" />
           </div>
-
-          <div className="view-selector">
-            <button
-              type="button"
-              className={viewMode === "list" ? "active" : ""}
-              onClick={() => setViewMode("list")}
-            >
-              List
-            </button>
-            <button
-              type="button"
-              className={viewMode === "visual" ? "active" : ""}
-              onClick={() => setViewMode("visual")}
-            >
-              Visual
-            </button>
+          <div className="node-list">
+            {graphNodes.length === 0 ? (
+              <p className="empty-copy">No graph found. Click Run Scan to get started.</p>
+            ) : (
+              graphNodes.slice(0, 80).map((node) => (
+                <button
+                  key={node.id}
+                  type="button"
+                  className={selectedNode?.id === node.id ? "node-row active" : "node-row"}
+                  onClick={() => selectNode(node)}
+                >
+                  {node.type === "module" ? <Boxes size={14} /> : <FileCode2 size={14} />}
+                  <span>{node.filePath || node.name}</span>
+                </button>
+              ))
+            )}
           </div>
-
-          {viewMode === "list" ? (
-            <div className="node-list">
-              {graphNodes.length === 0 ? (
-                <p className="empty-copy">No graph found. Click Run Scan to get started.</p>
-              ) : (
-                graphNodes.slice(0, 80).map((node) => (
-                  <button
-                    key={node.id}
-                    type="button"
-                    className={selectedNode?.id === node.id ? "node-row active" : "node-row"}
-                    onClick={() => selectNode(node)}
-                  >
-                    {node.type === "module" ? <Boxes size={14} /> : <FileCode2 size={14} />}
-                    <span>{node.filePath || node.name}</span>
-                  </button>
-                ))
-              )}
-            </div>
-          ) : (
-            <div style={{ position: 'relative', height: 'calc(100% - 64px)' }}>
-              {graphNodes.length === 0 ? (
-                <p className="empty-copy">No graph found. Click Run Scan to get started.</p>
-              ) : (
-                <>
-                  {!visLoaded && (
-                    <div style={{ padding: '10px', fontSize: '12px', color: 'var(--color-text-muted)' }}>
-                      Loading visual graph renderer...
-                    </div>
-                  )}
-                  <div id="visual-graph-container" />
-                </>
-              )}
-            </div>
-          )}
         </aside>
 
         <section className="chat-panel" aria-label="Cited question and answer thread">
