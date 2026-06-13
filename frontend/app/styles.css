@@ -704,3 +704,43 @@ td:nth-child(6) {
     border-top: 1px solid var(--color-border);
   }
 }
+
+.view-selector {
+  display: flex;
+  background: var(--color-bg-muted);
+  border-radius: var(--radius-sm);
+  padding: 2px;
+  margin-bottom: var(--space-2);
+}
+
+.view-selector button {
+  flex: 1;
+  border: 0;
+  background: transparent;
+  padding: 4px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  border-radius: var(--radius-sm);
+  color: var(--color-text-muted);
+  cursor: pointer;
+  text-align: center;
+}
+
+.view-selector button:hover {
+  color: var(--color-text);
+}
+
+.view-selector button.active {
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+#visual-graph-container {
+  height: 100%;
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  overflow: hidden;
+}
