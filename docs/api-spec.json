@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "DevOnboard API",
-    "description": "Local web-backed codebase institutional-memory API for scan, history ingest, graph retrieval, cited answers, evidence packs, and benchmarks.",
+    "description": "Local web-backed codebase institutional-memory API for scan, history ingest, graph retrieval, cited answers, evidence packs, and app result runs.",
     "version": "0.1.0"
   },
   "servers": [
@@ -230,27 +230,27 @@
         }
       }
     },
-    "/benchmark": {
+    "/results": {
       "post": {
-        "summary": "Run fixed benchmark comparison",
-        "operationId": "postBenchmark",
+        "summary": "Run fixed app result measurement",
+        "operationId": "postResults",
         "requestBody": {
           "required": false,
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/BenchmarkRequest"
+                "$ref": "#/components/schemas/ResultRequest"
               }
             }
           }
         },
         "responses": {
           "202": {
-            "description": "Benchmark started",
+            "description": "Result run started",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BenchmarkRunStarted"
+                  "$ref": "#/components/schemas/ResultRunStarted"
                 }
               }
             }
@@ -261,19 +261,19 @@
         }
       }
     },
-    "/benchmark/results": {
+    "/results/runs": {
       "get": {
-        "summary": "List saved benchmark runs",
-        "operationId": "getBenchmarkResults",
+        "summary": "List saved result runs",
+        "operationId": "getResultRuns",
         "responses": {
           "200": {
-            "description": "Saved benchmark runs",
+            "description": "Saved result runs",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "array",
                   "items": {
-                    "$ref": "#/components/schemas/BenchmarkRun"
+                    "$ref": "#/components/schemas/ResultRun"
                   }
                 }
               }
@@ -282,10 +282,10 @@
         }
       }
     },
-    "/benchmark/results/{run_id}": {
+    "/results/runs/{run_id}": {
       "get": {
-        "summary": "Get a saved benchmark run",
-        "operationId": "getBenchmarkRun",
+        "summary": "Get a saved result run",
+        "operationId": "getResultRun",
         "parameters": [
           {
             "name": "run_id",
@@ -298,11 +298,11 @@
         ],
         "responses": {
           "200": {
-            "description": "Benchmark run",
+            "description": "Result run",
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/BenchmarkRun"
+                  "$ref": "#/components/schemas/ResultRun"
                 }
               }
             }
@@ -372,7 +372,8 @@
         "required": ["repo_path"],
         "properties": {
           "repo_path": {
-            "type": "string"
+            "type": "string",
+            "description": "Local repository path or public HTTPS GitHub URL."
           },
           "branch": {
             "type": "string",
@@ -393,6 +394,18 @@
       "IngestHistoryRequest": {
         "type": "object",
         "properties": {
+          "repo_path": {
+            "type": "string",
+            "description": "Optional local repository path or public HTTPS GitHub URL selected in the frontend. Falls back to graph repo URL/path, then TARGET_REPO_PATH."
+          },
+          "branch": {
+            "type": "string",
+            "default": "dev"
+          },
+          "commit": {
+            "type": "string",
+            "nullable": true
+          },
           "max_commits": {
             "type": "integer",
             "default": 500
@@ -571,15 +584,15 @@
               "type": "object"
             }
           },
-          "benchmark_runs": {
+          "result_runs": {
             "type": "array",
             "items": {
-              "$ref": "#/components/schemas/BenchmarkRunSummary"
+              "$ref": "#/components/schemas/ResultRunSummary"
             }
           }
         }
       },
-      "BenchmarkRunSummary": {
+      "ResultRunSummary": {
         "type": "object",
         "required": ["run_id", "created_at"],
         "properties": {
@@ -689,7 +702,7 @@
           }
         }
       },
-      "BenchmarkRequest": {
+      "ResultRequest": {
         "type": "object",
         "properties": {
           "repo": {
@@ -705,7 +718,7 @@
           }
         }
       },
-      "BenchmarkRunStarted": {
+      "ResultRunStarted": {
         "type": "object",
         "required": ["run_id", "status"],
         "properties": {
@@ -718,7 +731,7 @@
           }
         }
       },
-      "BenchmarkRun": {
+      "ResultRun": {
         "type": "object",
         "required": ["run_id", "repo", "target_branch", "rows", "created_at"],
         "properties": {
@@ -749,17 +762,13 @@
       },
       "MetricRow": {
         "type": "object",
-        "required": ["query_id", "query_text", "mode", "time_to_useful_answer_ms", "citations_count", "evidence_count"],
+        "required": ["query_id", "query_text", "time_to_useful_answer_ms", "citations_count", "evidence_count", "warnings_count"],
         "properties": {
           "query_id": {
             "type": "integer"
           },
           "query_text": {
             "type": "string"
-          },
-          "mode": {
-            "type": "string",
-            "enum": ["devonboard", "plain_agent"]
           },
           "time_to_useful_answer_ms": {
             "type": "integer"
@@ -770,13 +779,8 @@
           "evidence_count": {
             "type": "integer"
           },
-          "input_tokens": {
+          "warnings_count": {
             "type": "integer",
-            "nullable": true
-          },
-          "output_tokens": {
-            "type": "integer",
-            "nullable": true
           },
           "evidence_usefulness_score": {
             "type": "integer",
@@ -809,6 +813,15 @@
           },
           "llm_available": {
             "type": "boolean"
+          },
+          "target_repo": {
+            "type": "object",
+            "description": "Configured non-secret target repository context."
+          },
+          "graph_repo": {
+            "type": "object",
+            "nullable": true,
+            "description": "Repository context persisted in the current knowledge graph, if any."
           }
         }
       }

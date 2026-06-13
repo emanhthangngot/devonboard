@@ -65,23 +65,28 @@
 
 ---
 
-## Phase 6 — API, UI, Benchmark
+## Phase 6 — API, UI, Result
 
-- [x] Add scan, ingest, query, graph, and benchmark endpoints.
+- [x] Add scan, ingest, query, graph, and result endpoints.
 - [x] Build workspace UI.
 - [x] Build History/Why inspector.
-- [x] Build benchmark dashboard.
+- [x] Build result dashboard.
 - [x] Add quickstart and demo script.
+- [x] Rebuild frontend workspace from `template-frontend` UX patterns while keeping Next.js + FastAPI.
+- [x] Add local repo path and GitHub URL switching so scan and history ingest use the same selected repo.
+- [x] Add required frontend states from the design bundle: no-repo, graph missing, scan/ingest running, query running, API error, empty evidence, and result running.
+- [x] Add Three.js architecture visualization from real graph nodes and edges.
 
-**Checkpoint:** full web demo runs locally with cited answers, evidence packs, and benchmark output.
+**Checkpoint:** full web demo runs locally with cited answers, evidence packs, and app result output.
 
 ---
 
 ## Implementation Status
 
 - [x] Root `Makefile` runs backend tests, frontend tests, build, and E2E smoke.
-- [x] FastAPI backend exposes health, scan, ingest, graph, query, evidence-pack, and benchmark routes.
-- [x] Next.js frontend provides a Claude-style workspace and benchmark dashboard.
-- [x] E2E smoke covers scan, history ingest, cited query, evidence pack, and benchmark.
+- [x] FastAPI backend exposes health, scan, ingest, graph, query, evidence-pack, and result routes.
+- [x] Next.js frontend provides a Claude-style workspace, architecture map, and result dashboard.
+- [x] E2E smoke covers scan, history ingest, cited query, evidence pack, and app results.
+- [x] Repo context from the frontend is honored by both scan and history ingest.
 - [ ] GitHub PR, issue, and review metadata enrichment remains a follow-up beyond local Git history ingest.
 - [ ] Full documentation rewrite in Phase 1 remains a separate content pass.

@@ -11,7 +11,7 @@ interface KnowledgeGraph {
   repo: RepoMeta;
   nodes: GraphNode[];
   edges: GraphEdge[];
-  benchmark_runs?: BenchmarkRunSummary[];
+  result_runs?: ResultRunSummary[];
 }
 ```
 
@@ -209,22 +209,20 @@ class EvidencePack(BaseModel):
 
 ---
 
-## 8. Benchmark Models
+## 8. Result Models
 
 ```python
 class MetricRow(BaseModel):
     query_id: int
     query_text: str
-    mode: Literal["devonboard", "plain_agent"]
     time_to_useful_answer_ms: int
     citations_count: int
     evidence_count: int
-    input_tokens: int | None = None
-    output_tokens: int | None = None
+    warnings_count: int
     evidence_usefulness_score: int | None = None  # computed 1-5 score, see RAG.md
     human_quality_score: int | None = None        # manual evaluator rating
 
-class BenchmarkRun(BaseModel):
+class ResultRun(BaseModel):
     run_id: str
     repo: str
     target_branch: str

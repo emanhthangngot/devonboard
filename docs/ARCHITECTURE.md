@@ -6,16 +6,16 @@
 
 ## 1. System Overview
 
-DevOnboard builds a knowledge graph from a target repository and uses it to power onboarding, historical explanation, refactor-risk analysis, and benchmarking.
+DevOnboard builds a knowledge graph from a target repository and uses it to power onboarding, historical explanation, refactor-risk analysis, and app result measurement.
 
 ```text
-Target repo
+Target repo or public GitHub URL
   -> Structure Scanner
   -> Git/GitHub History Ingest
   -> Rationale Extractor
   -> DevOnboard Knowledge Graph
   -> Hybrid Retrieval
-  -> Answer Synthesis + UI + Benchmark
+  -> Answer Synthesis + UI + Result
 ```
 
 Primary artifact:
@@ -123,12 +123,12 @@ backend/app/
 │   ├── router.py
 │   ├── retrieval.py
 │   ├── synthesis.py
-│   └── benchmark.py
+│   └── results.py
 └── routers/
     ├── scan.py
     ├── ingest.py
     ├── query.py
-    └── benchmark.py
+    └── results.py
 ```
 
 API surface:
@@ -142,9 +142,9 @@ POST /query
 GET  /graph
 GET  /graph/node/{id}/history
 POST /evidence-packs
-POST /benchmark
-GET  /benchmark/results
-GET  /benchmark/results/{run_id}
+POST /results
+GET  /results/runs
+GET  /results/runs/{run_id}
 GET  /health
 ```
 
@@ -160,7 +160,7 @@ Main:
   Left  -> graph/file/subsystem navigation
   Center -> Q&A and cited answers
   Right -> History/Why inspector for selected node
-Benchmark tab -> comparison table and charts
+Result tab -> app metric table and charts
 ```
 
 Required states:
@@ -171,7 +171,7 @@ Required states:
 - node selected with history;
 - node selected with no history;
 - query streaming;
-- benchmark running.
+- result running.
 
 ---
 
@@ -180,8 +180,9 @@ Required states:
 ### Scan
 
 ```text
-repo path
+repo path or public GitHub URL
   -> ignore filter
+  -> managed clone cache when input is a GitHub URL
   -> file inventory
   -> symbol/import extraction
   -> graph nodes/edges
