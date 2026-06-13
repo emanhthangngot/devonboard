@@ -23,7 +23,14 @@ def create_git_repo(tmp_path: Path) -> Path:
     git(repo, "config", "user.name", "Dev Onboard")
     (repo / "main.go").write_text("package main\n\nfunc main() {}\n", encoding="utf-8")
     git(repo, "add", "main.go")
-    git(repo, "commit", "-m", "feat: add main entrypoint")
+    git(
+        repo,
+        "commit",
+        "-m",
+        "feat: add main entrypoint",
+        "-m",
+        "Split the entrypoint because startup behavior needs to stay testable.",
+    )
     return repo
 
 
@@ -35,7 +42,9 @@ def test_git_history_ingest_links_commits_to_scanned_files(tmp_path: Path) -> No
 
     commit_nodes = [node for node in ingested.nodes if node.type == "source"]
     entity_nodes = [node for node in ingested.nodes if node.type == "entity"]
+    claim_nodes = [node for node in ingested.nodes if node.type == "claim"]
     assert len(commit_nodes) == 1
+    assert len(claim_nodes) == 1
     assert commit_nodes[0].metadata["kind"] == "commit"
     assert commit_nodes[0].metadata["filesTouched"] == ["main.go"]
     assert entity_nodes[0].name == "Dev Onboard"
