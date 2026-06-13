@@ -95,6 +95,33 @@ textarea {
   text-decoration: none;
 }
 
+.status-action {
+  height: var(--button-height);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  padding: 0 var(--space-2);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.status-action:hover {
+  background: var(--color-bg-muted);
+}
+
+.banner {
+  border-bottom: 1px solid var(--color-border);
+  background: #FBE9E7;
+  color: #C3362C;
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-sm);
+}
+
 .workspace-grid {
   height: calc(100vh - var(--topnav-height));
   display: grid;
@@ -133,6 +160,45 @@ textarea {
   color: var(--color-text-muted);
   font-size: var(--text-sm);
   line-height: 18px;
+}
+
+.node-list {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.node-row {
+  min-height: var(--row-height-compact);
+  display: grid;
+  grid-template-columns: 18px 1fr;
+  align-items: center;
+  gap: var(--space-1);
+  border: 0;
+  border-left: 2px solid transparent;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--color-text);
+  padding: 0 var(--space-2);
+  text-align: left;
+  cursor: pointer;
+}
+
+.node-row span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.node-row:hover {
+  background: var(--color-bg-muted);
+}
+
+.node-row.active {
+  border-left-color: var(--color-primary);
+  background: var(--color-primary-subtle);
 }
 
 .chat-panel {
@@ -195,7 +261,7 @@ textarea {
   max-width: 820px;
   width: calc(100% - 48px);
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 112px 1fr auto;
   gap: var(--space-2);
   align-items: end;
   margin: 0 auto var(--space-4);
@@ -228,8 +294,20 @@ textarea {
   line-height: 20px;
 }
 
+.composer select {
+  height: var(--button-height);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  color: var(--color-text);
+  padding: 0 var(--space-2);
+}
+
 .composer button {
   height: var(--button-height);
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
   border: 0;
   border-radius: var(--radius-sm);
   background: var(--color-primary);
@@ -237,6 +315,182 @@ textarea {
   padding: 0 var(--space-3);
   font-weight: 500;
   cursor: pointer;
+}
+
+.composer button:disabled {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
+.turn {
+  max-width: 820px;
+  margin: 0 auto var(--space-5);
+}
+
+.user-query {
+  margin: 0 0 var(--space-2);
+  color: var(--color-text);
+  font-size: var(--text-base);
+  font-weight: 500;
+  line-height: 20px;
+}
+
+.route-badge {
+  width: max-content;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  padding: 0 6px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.answer-body {
+  margin-top: var(--space-2);
+  white-space: pre-wrap;
+  color: var(--color-text);
+  font-size: var(--text-base);
+  line-height: 22px;
+}
+
+.citation-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.citation-chip {
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+  padding: var(--space-1) var(--space-2);
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+
+.warning {
+  margin-top: var(--space-2);
+  border-left: 3px solid #B5790A;
+  border-radius: var(--radius-sm);
+  background: #FBF1DE;
+  color: #5B6472;
+  padding: var(--space-2);
+  font-size: var(--text-sm);
+  line-height: 18px;
+}
+
+.selected-node {
+  display: grid;
+  gap: var(--space-1);
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.selected-node strong {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.selected-node span {
+  overflow-wrap: anywhere;
+  color: var(--color-text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+}
+
+.evidence-section {
+  display: grid;
+  gap: var(--space-2);
+  margin-top: var(--space-3);
+}
+
+.evidence-section h2 {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.citation-card {
+  display: grid;
+  gap: var(--space-1);
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  padding: var(--space-2);
+  color: var(--color-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.citation-card:hover {
+  border-color: var(--color-border-strong);
+}
+
+.citation-card strong {
+  font-size: var(--text-sm);
+}
+
+.citation-card span:last-child {
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  line-height: 16px;
+}
+
+.evidence-badge {
+  width: max-content;
+  height: 18px;
+  border-radius: var(--radius-sm);
+  padding: 0 6px;
+  background: #E6F6EC;
+  color: #1F8A4C;
+  font-size: var(--text-xs);
+  font-weight: 500;
+}
+
+.evidence-badge.file,
+.evidence-badge.function,
+.evidence-badge.module,
+.evidence-badge.class {
+  background: var(--color-primary-subtle);
+  color: var(--color-primary);
+}
+
+.evidence-badge.claim {
+  background: #FBF1DE;
+  color: #B5790A;
+}
+
+.pack-button {
+  width: 100%;
+  height: var(--button-height);
+  margin-top: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.pack-preview {
+  max-height: 260px;
+  overflow: auto;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg-subtle);
+  padding: var(--space-2);
+  color: var(--color-text);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  white-space: pre-wrap;
 }
 
 .composer button:hover {
@@ -259,5 +513,13 @@ textarea {
   .left-panel .empty-copy,
   .left-panel .panel-header span {
     display: none;
+  }
+
+  .composer {
+    grid-template-columns: 1fr auto;
+  }
+
+  .composer select {
+    grid-column: 1 / -1;
   }
 }
