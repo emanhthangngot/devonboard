@@ -17,7 +17,7 @@ DevOnboard scans a repository, ingests development history, extracts design rati
 ├── 05_use_cases/              # Core product use cases
 ├── devonboard-design/         # Design system, UX flows, accessibility, and UI components
 ├── docs/                      # Architectural specifications, diagrams, plans, and API docs
-├── backend/                   # FastAPI Python backend (scanner, ingest, query, benchmark)
+├── backend/                   # FastAPI Python backend (scanner, ingest, query, results)
 ├── frontend/                  # Next.js workspace user interface
 ├── scripts/                   # Integration and verification scripts
 ├── Makefile                   # Automation commands for dependencies, tests, running, and E2E
@@ -45,10 +45,13 @@ Ensure the following tools are installed on your system:
    ```bash
    cp .env.example .env
    ```
-2. Edit `.env` and fill in:
-   - `GEMINI_API_KEY`: Get a free key at [Google AI Studio](https://aistudio.google.com/app/apikey). Required for Q&A synthesis and rationale extraction.
-   - `GITHUB_TOKEN`: Recommended. Increases GitHub API rate limits from 60 to 5000 requests/hour (read-only `public_repo` scope needed).
-   - Configure other settings like `TARGET_REPO_PATH` (defaults to `./target_repo`).
+2. Edit `.env` and confirm:
+   - `TARGET_REPO_PATH`: Local repository to scan. Defaults to `./target_repo`; the UI can also submit a public GitHub URL.
+   - `DEVONBOARD_REPO_CACHE_PATH`: Managed cache for GitHub URL clones. Defaults to `./devonboard/repos`.
+   - `DEVONBOARD_GRAPH_PATH`: Output graph path. Defaults to `./devonboard/knowledge-graph.json`.
+   - `DEVONBOARD_RESULTS_DIR`: Stored app result runs. Defaults to `./devonboard/results`.
+   - `GEMINI_API_KEY`: Optional in the current local graph-retrieval MVP. Set it only when enabling external LLM-backed features.
+   - `GITHUB_TOKEN`: Optional. Current local history ingest works from Git commits without it; future GitHub metadata enrichment can use a read-only token.
 
 ---
 
@@ -93,7 +96,7 @@ Using the root `Makefile` is the recommended way to manage dependencies and serv
 
 ### Option B: Containerized Run (Docker Compose)
 
-To build and launch all services (FastAPI backend, Next.js frontend, and a Qdrant vector database) in containers:
+To build and launch the FastAPI backend and Next.js frontend in containers:
 
 ```bash
 make up
@@ -101,6 +104,12 @@ make up
 ```
 
 Access the web interface at `http://localhost:3000` once the services are running.
+
+Qdrant is optional and is behind a Docker Compose profile:
+
+```bash
+docker compose --profile qdrant up --build
+```
 
 ---
 
@@ -134,8 +143,8 @@ Once the app is running:
 1. **Scan the Codebase**: In the top navigation of the UI, click **Run Scan**. This walks the target repository and populates the structural graph.
 2. **Ingest Git History**: Click **Ingest History** to extract git commit logs, link them to modules/classes/functions, and query design-rationale claims.
 3. **Inspect the Graph**: Click on files or nodes in the left panel to open them in the **History/Why Inspector** on the right, which shows associated authors, risks, claims, and commits.
-4. **Ask Cited Q&A**: Enter a query in the central panel (e.g., *"How does the agent pipeline execute a tool call?"*). The system will search the graph, retrieve evidence, use Gemini to synthesize an answer, and list citations linked directly to raw commits and files.
-5. **Run Evaluation Benchmarks**: Go to `/benchmark` (or click "Benchmark" in the top bar) and click **Run Benchmark** to evaluate retrieval quality and latency against standard LLM baselines.
+4. **Ask Cited Q&A**: Enter a query in the central panel (e.g., *"How does the agent pipeline execute a tool call?"*). The system searches the graph, retrieves evidence, and returns a cited answer with linked files, commits, and claims where available.
+5. **Run App Results**: Go to `/results` (or click "Result" in the top bar) and click **Run Result** to measure DevOnboard retrieval latency, citations, evidence coverage, and warnings.
 6. **Generate Evidence Packs**: Generate copyable Markdown guides customized for PR reviews or coding agents.
 
 ---

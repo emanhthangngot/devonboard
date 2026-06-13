@@ -25,9 +25,9 @@ Core routers:
 - `GET /graph`
 - `GET /graph/node/{id}/history`
 - `POST /evidence-packs`
-- `POST /benchmark`
-- `GET /benchmark/results`
-- `GET /benchmark/results/{run_id}`
+- `POST /results`
+- `GET /results/runs`
+- `GET /results/runs/{run_id}`
 - `GET /health`
 
 ---
@@ -91,13 +91,13 @@ All AI calls must use retry/backoff and must expose errors clearly.
 
 ---
 
-## 6. Benchmark Service
+## 6. Result Service
 
-Benchmark service:
+Result service:
 
 - loads fixed query set;
-- runs DevOnboard and plain-agent modes;
-- records time-to-useful-answer, evidence count, citation count, token estimates, computed evidence usefulness score, and optional human quality score;
+- runs DevOnboard app retrieval only;
+- records time-to-useful-answer, evidence count, citation count, warnings count, computed evidence usefulness score, and optional human quality score;
 - writes immutable JSON results.
 
 Evidence pack service:

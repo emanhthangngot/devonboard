@@ -48,7 +48,7 @@ class RepoMeta(BaseModel):
     url: str | None = None
 
 
-class BenchmarkRunSummary(BaseModel):
+class ResultRunSummary(BaseModel):
     run_id: str
     created_at: datetime
 
@@ -84,7 +84,7 @@ class KnowledgeGraph(BaseModel):
     repo: RepoMeta
     nodes: list[GraphNode] = Field(default_factory=list)
     edges: list[GraphEdge] = Field(default_factory=list)
-    benchmark_runs: list[BenchmarkRunSummary] = Field(default_factory=list)
+    result_runs: list[ResultRunSummary] = Field(default_factory=list)
 
     def node_by_id(self, node_id: str) -> GraphNode:
         for node in self.nodes:

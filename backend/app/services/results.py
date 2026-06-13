@@ -7,7 +7,7 @@ from uuid import uuid4
 from backend.app.graph.models import KnowledgeGraph
 from backend.app.services.retrieval import RetrievalService
 
-BENCHMARK_QUERIES = [
+RESULT_QUERIES = [
     "How does the agent pipeline execute a tool call?",
     "Why was progressive memory loading chosen?",
     "Is it safe to refactor ProviderAdapter?",
@@ -16,44 +16,26 @@ BENCHMARK_QUERIES = [
 ]
 
 
-class BenchmarkService:
+class ResultService:
     def __init__(self, graph: KnowledgeGraph, results_dir: Path | None = None) -> None:
         self.graph = graph
-        self.results_dir = results_dir or Path(
-            os.environ.get("DEVONBOARD_BENCHMARK_RESULTS_DIR", "./benchmark/results")
-        )
+        self.results_dir = results_dir or Path(os.environ.get("DEVONBOARD_RESULTS_DIR", "./devonboard/results"))
 
     def run(self, repo: str, target_branch: str, target_commit: str | None = None) -> dict[str, object]:
         run_id = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S") + "-" + uuid4().hex[:8]
         retrieval = RetrievalService(self.graph)
         rows: list[dict[str, object]] = []
-        for index, query in enumerate(BENCHMARK_QUERIES, start=1):
+        for index, query in enumerate(RESULT_QUERIES, start=1):
             result = retrieval.answer(query=query, mode="auto")
             rows.append(
                 {
                     "query_id": index,
                     "query_text": query,
-                    "mode": "devonboard",
                     "time_to_useful_answer_ms": result.retrieval_ms + result.synthesis_ms,
                     "citations_count": len(result.citations),
                     "evidence_count": len(result.structural) + len(result.historical),
-                    "input_tokens": None,
-                    "output_tokens": None,
+                    "warnings_count": len(result.warnings),
                     "evidence_usefulness_score": self._score(result.citations, result.warnings),
-                    "human_quality_score": None,
-                }
-            )
-            rows.append(
-                {
-                    "query_id": index,
-                    "query_text": query,
-                    "mode": "plain_agent",
-                    "time_to_useful_answer_ms": 0,
-                    "citations_count": 0,
-                    "evidence_count": 0,
-                    "input_tokens": None,
-                    "output_tokens": None,
-                    "evidence_usefulness_score": 1,
                     "human_quality_score": None,
                 }
             )
@@ -84,5 +66,5 @@ class BenchmarkService:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def _score(self, citations: list[dict[str, object]], warnings: list[str]) -> int:
-        score = 1 + min(2, len(citations)) + (0 if warnings else 1)
+        score = 1 + min(3, len(citations)) - min(1, len(warnings))
         return max(1, min(5, score))

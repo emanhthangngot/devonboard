@@ -9,7 +9,7 @@ The app opens directly into the working product. No marketing landing page.
 Primary user task:
 
 ```text
-select repo context -> inspect graph/history -> ask cited questions
+select or confirm local repo context -> scan/ingest -> inspect graph/history -> ask cited questions
 ```
 
 ---
@@ -18,27 +18,28 @@ select repo context -> inspect graph/history -> ask cited questions
 
 ```text
 TopNav
-  repo name, scan status, ingest status, benchmark link
+  repo name/path or GitHub URL, branch/commit, scan status, ingest status, result link
 
 Main Workspace
   Left: graph/file/subsystem navigation
   Center: Q&A thread and cited answer
   Right: History/Why inspector
 
-Benchmark View
-  query set, run button, comparison table, charts
+Result View
+  query set, run button, app metric table, charts
 ```
 
 ---
 
 ## 3. Core Components
 
+- `RepoContextPanel`: local target repo path or public GitHub URL input, branch/commit display, and scan trigger.
 - `GraphPane`: visual or list-based graph explorer.
 - `NodeInspector`: selected node overview.
 - `HistoryPanel`: commits, PRs, issues, claims, authors.
 - `QueryPanel`: mode selector, input, answer, citations, and retrieved context.
 - `CitationCard`: file, commit, PR, issue, claim evidence.
-- `BenchmarkPanel`: stored benchmark runs.
+- `ResultPanel`: stored app result runs.
 - `EvidencePackPanel`: copyable PR review and AI-agent context packs.
 
 ---
@@ -73,17 +74,35 @@ Evidence should be compact, clickable, and grouped by type.
 ## 6. Required States
 
 - No repo loaded.
+- Repo path configured but graph missing.
 - Scan running.
 - History ingest running.
 - Query running.
 - Selected node with no history.
 - Selected node with multiple evidence types.
-- Benchmark running.
+- Result running.
 - API or token error.
 
 ---
 
-## 7. Defensive UX / Human Verification
+## 7. Repo Context Switching
+
+Repo switching accepts either a local path or a public GitHub HTTPS URL. The
+frontend stores the last value in browser-local state and sends that same value
+to scan and history ingest operations.
+
+- `POST /scan` receives the selected `repo_path`, `branch`, and optional `commit`.
+- For GitHub URLs, the backend clones/fetches into the managed ignored cache
+  configured by `DEVONBOARD_REPO_CACHE_PATH`.
+- `POST /ingest/history` receives the same selected `repo_path` so history ingest
+  cannot accidentally read the old `TARGET_REPO_PATH`.
+- The UI does not write `.env`.
+- Health/status UI may show non-secret repo context, but must never render tokens
+  or provider credentials.
+
+---
+
+## 8. Defensive UX / Human Verification
 
 DevOnboard must behave like a copilot, not an autopilot. The UI should help the user verify or reject AI output.
 

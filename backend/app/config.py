@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     devonboard_graph_path: Path = Field(
         default=Path("./devonboard/knowledge-graph.json"), alias="DEVONBOARD_GRAPH_PATH"
     )
+    repo_cache_path: Path = Field(default=Path("./devonboard/repos"), alias="DEVONBOARD_REPO_CACHE_PATH")
     target_repo_branch: str = Field(default="dev", alias="TARGET_REPO_BRANCH")
     target_repo_commit: str | None = Field(default=None, alias="TARGET_REPO_COMMIT")
     github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
@@ -21,8 +22,8 @@ class Settings(BaseSettings):
         default=False, alias="ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO"
     )
     max_commits_ingest: int = Field(default=500, alias="MAX_COMMITS_INGEST")
-    benchmark_results_dir: Path = Field(
-        default=Path("./benchmark/results"), alias="DEVONBOARD_BENCHMARK_RESULTS_DIR"
+    results_dir: Path = Field(
+        default=Path("./devonboard/results"), alias="DEVONBOARD_RESULTS_DIR"
     )
     exclude_patterns: str = Field(
         default=".env*,node_modules/**,vendor/**,dist/**,build/**,.git/**",

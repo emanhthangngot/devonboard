@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from backend.app.config import get_settings
 from backend.app.graph.graph_store import GraphStore
 from backend.app.scanner.structure_scanner import StructureScanner
+from backend.app.services.repo_resolver import resolve_repository_input
 
 router = APIRouter()
 
@@ -35,15 +36,22 @@ def post_scan(request: ScanRequest) -> dict[str, object]:
     ]
     _scan_status.update({"status": "running", "progress": 10, "message": "Scanning", "error": None})
     try:
+        resolved = resolve_repository_input(
+            request.repo_path,
+            branch=request.branch,
+            commit=request.commit,
+            cache_root=settings.repo_cache_path,
+        )
         graph = StructureScanner(
-            repo_path=Path(request.repo_path),
+            repo_path=resolved.path,
             branch=request.branch,
             commit=request.commit,
             exclude_patterns=exclude_patterns,
+            repo_url=resolved.url,
         ).scan()
         store = GraphStore(path=settings.devonboard_graph_path, repo=graph.repo, graph=graph)
         store.save()
-    except FileNotFoundError as exc:
+    except (FileNotFoundError, ValueError) as exc:
         _scan_status.update({"status": "error", "progress": 0, "error": str(exc)})
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
@@ -54,6 +62,9 @@ def post_scan(request: ScanRequest) -> dict[str, object]:
             "message": f"Scanned {len(graph.nodes)} nodes and {len(graph.edges)} edges.",
             "warnings": [],
             "error": None,
+            "resolved_repo_path": str(resolved.path),
+            "repo_url": resolved.url,
+            "repo_name": resolved.name,
         }
     )
     return _scan_status
