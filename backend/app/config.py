@@ -21,6 +21,9 @@ class Settings(BaseSettings):
         default=False, alias="ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO"
     )
     max_commits_ingest: int = Field(default=500, alias="MAX_COMMITS_INGEST")
+    benchmark_results_dir: Path = Field(
+        default=Path("./benchmark/results"), alias="DEVONBOARD_BENCHMARK_RESULTS_DIR"
+    )
     exclude_patterns: str = Field(
         default=".env*,node_modules/**,vendor/**,dist/**,build/**,.git/**",
         alias="EXCLUDE_PATTERNS",
