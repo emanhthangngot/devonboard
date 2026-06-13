@@ -1,0 +1,292 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "DevOnboard API",
+    "description": "Hybrid RAG + CodeGraph Q&A system for goclaw codebase",
+    "version": "0.1.0"
+  },
+  "servers": [
+    { "url": "http://localhost:8000", "description": "Local development" }
+  ],
+  "paths": {
+    "/query": {
+      "post": {
+        "summary": "Submit a query (full response, non-streaming)",
+        "operationId": "postQuery",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/QueryRequest" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Full query response with citations",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/QueryResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/query/stream": {
+      "get": {
+        "summary": "Stream a query response via SSE",
+        "operationId": "streamQuery",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "schema": { "type": "string" },
+            "description": "The user query"
+          },
+          {
+            "name": "mode",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": ["auto", "structural", "historical", "hybrid"],
+              "default": "auto"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Server-Sent Events stream of StreamChunk objects",
+            "content": {
+              "text/event-stream": {
+                "schema": { "$ref": "#/components/schemas/StreamChunk" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ingest/start": {
+      "post": {
+        "summary": "Start the git history ingest pipeline",
+        "operationId": "startIngest",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/IngestRequest" }
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Ingest started",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/ingest/status": {
+      "get": {
+        "summary": "Get current ingest status",
+        "operationId": "getIngestStatus",
+        "responses": {
+          "200": {
+            "description": "Current ingest progress",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/IngestStatus" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/benchmark/run": {
+      "post": {
+        "summary": "Run benchmark comparison (DevOnboard vs plain agent)",
+        "operationId": "runBenchmark",
+        "responses": {
+          "202": {
+            "description": "Benchmark started",
+            "content": {
+              "application/json": {
+                "schema": { "type": "object", "properties": { "run_id": { "type": "string" } } }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/benchmark/results": {
+      "get": {
+        "summary": "List all saved benchmark runs",
+        "operationId": "listBenchmarkResults",
+        "responses": {
+          "200": {
+            "description": "List of benchmark runs",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": { "$ref": "#/components/schemas/BenchmarkRun" }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/benchmark/results/{run_id}": {
+      "get": {
+        "summary": "Get a specific benchmark run",
+        "operationId": "getBenchmarkRun",
+        "parameters": [
+          { "name": "run_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Benchmark run data",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/BenchmarkRun" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "operationId": "healthCheck",
+        "responses": {
+          "200": {
+            "description": "Service health",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string" },
+                    "qdrant": { "type": "boolean" },
+                    "codegraph": { "type": "boolean" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "QueryRequest": {
+        "type": "object",
+        "required": ["query"],
+        "properties": {
+          "query": { "type": "string", "minLength": 1 },
+          "mode": {
+            "type": "string",
+            "enum": ["auto", "structural", "historical", "hybrid"],
+            "default": "auto"
+          }
+        }
+      },
+      "QueryResponse": {
+        "type": "object",
+        "properties": {
+          "answer": { "type": "string" },
+          "citations": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/Citation" }
+          },
+          "route": { "type": "string" },
+          "retrieval_ms": { "type": "integer" },
+          "synthesis_ms": { "type": "integer" },
+          "total_tokens": { "type": "integer" }
+        }
+      },
+      "StreamChunk": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "enum": ["token", "citation", "metadata", "error", "done"]
+          },
+          "content": { "type": "string" },
+          "citation": { "$ref": "#/components/schemas/Citation" },
+          "metadata": { "$ref": "#/components/schemas/ResponseMetadata" }
+        }
+      },
+      "Citation": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "enum": ["file", "commit", "pr", "issue"] },
+          "label": { "type": "string" },
+          "url": { "type": "string", "nullable": true },
+          "snippet": { "type": "string", "nullable": true }
+        }
+      },
+      "ResponseMetadata": {
+        "type": "object",
+        "properties": {
+          "route": { "type": "string" },
+          "retrieval_ms": { "type": "integer" },
+          "synthesis_ms": { "type": "integer" },
+          "total_tokens": { "type": "integer" }
+        }
+      },
+      "IngestRequest": {
+        "type": "object",
+        "properties": {
+          "max_commits": { "type": "integer", "default": 500 },
+          "include_pr_comments": { "type": "boolean", "default": true }
+        }
+      },
+      "IngestStatus": {
+        "type": "object",
+        "properties": {
+          "status": { "type": "string", "enum": ["idle", "running", "done", "error"] },
+          "progress": { "type": "integer", "description": "0-100" },
+          "commits_processed": { "type": "integer" },
+          "total_commits": { "type": "integer" },
+          "error": { "type": "string", "nullable": true }
+        }
+      },
+      "BenchmarkRun": {
+        "type": "object",
+        "properties": {
+          "run_id": { "type": "string" },
+          "repo": { "type": "string" },
+          "rows": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/MetricRow" }
+          },
+          "created_at": { "type": "string", "format": "date-time" }
+        }
+      },
+      "MetricRow": {
+        "type": "object",
+        "properties": {
+          "query_id": { "type": "integer" },
+          "query_text": { "type": "string" },
+          "mode": { "type": "string", "enum": ["devonboard", "plain_agent"] },
+          "wall_clock_ms": { "type": "integer" },
+          "tool_calls": { "type": "integer" },
+          "input_tokens": { "type": "integer" },
+          "output_tokens": { "type": "integer" },
+          "answer_length": { "type": "integer" },
+          "quality_score": { "type": "integer", "nullable": true, "minimum": 1, "maximum": 5 }
+        }
+      }
+    }
+  }
+}
