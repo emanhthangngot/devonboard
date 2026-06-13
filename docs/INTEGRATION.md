@@ -34,11 +34,11 @@ TARGET_REPO_PATH=./target_repo
 DEVONBOARD_GRAPH_PATH=./devonboard/knowledge-graph.json
 GITHUB_TOKEN=...
 GEMINI_API_KEY=...
-MAX_COMMITS_INGEST=500
 QDRANT_URL=http://localhost:6333
 BACKEND_URL=http://localhost:8000
 TARGET_REPO_BRANCH=dev
 TARGET_REPO_COMMIT=<pin-for-demo>
+MAX_COMMITS_INGEST=500
 ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO=false
 ```
 
@@ -71,7 +71,7 @@ POST /ingest/history
 ### Query Pipeline
 
 ```text
-POST /query or GET /query/stream
+POST /query
   -> route query
   -> retrieve evidence
   -> synthesize answer

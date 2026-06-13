@@ -121,6 +121,8 @@ In these cases, the answer should state what evidence is missing and suggest the
 
 Plain-agent mode receives only README and file listing context. DevOnboard mode receives graph-retrieved structural and historical evidence. Compare the outputs by citation quality, evidence coverage, and answer usefulness.
 
+`evidence_usefulness_score` is computed automatically from retrieved evidence coverage, direct citations, evidence diversity, and absence of unsupported claims as defined in `docs/RAG.md`. `human_quality_score` is a manual 1-5 rating entered by the evaluator.
+
 Use this fixed MVP query set:
 
 1. Structural onboarding: "How does the agent pipeline execute a tool call?"

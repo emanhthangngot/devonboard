@@ -28,9 +28,9 @@ TARGET_REPO_PATH=./target_repo
 DEVONBOARD_GRAPH_PATH=./devonboard/knowledge-graph.json
 GITHUB_TOKEN=...
 GEMINI_API_KEY=...
-MAX_COMMITS_INGEST=500
 TARGET_REPO_BRANCH=dev
 TARGET_REPO_COMMIT=<pin-for-demo>
+MAX_COMMITS_INGEST=500
 ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO=false
 ```
 
@@ -38,21 +38,6 @@ Clone target repo:
 
 ```bash
 git clone https://github.com/nextlevelbuilder/goclaw target_repo
-```
-
----
-
-## Build Graph
-
-```bash
-devonboard scan --repo target_repo
-devonboard ingest-history --repo target_repo --max-commits 500
-```
-
-Expected output:
-
-```text
-devonboard/knowledge-graph.json
 ```
 
 ---
@@ -71,6 +56,23 @@ http://localhost:3000
 
 ---
 
+## Build Graph From The Web UI
+
+Use the workspace controls:
+
+1. Click **Run Scan**.
+2. Wait for scan status to become `done`.
+3. Click **Ingest History**.
+4. Wait for ingest status to become `done` or `partial`.
+
+Expected output:
+
+```text
+devonboard/knowledge-graph.json
+```
+
+---
+
 ## Demo Queries
 
 ```text
@@ -85,9 +87,7 @@ Create a cited context pack for an agent modifying the provider subsystem.
 
 ## Benchmark
 
-```bash
-devonboard benchmark
-```
+Open the Benchmark view and click **Run Benchmark**.
 
 Expected result:
 
@@ -101,8 +101,8 @@ benchmark/results/<timestamp>.json
 
 | Problem | Fix |
 |---|---|
-| No graph found | run `devonboard scan` |
-| No history evidence | run `devonboard ingest-history` |
+| No graph found | click **Run Scan** in the web workspace |
+| No history evidence | click **Ingest History** in the web workspace |
 | GitHub rate limit | reduce `MAX_COMMITS_INGEST` or add token |
 | LLM unavailable | inspect retrieved evidence directly |
 | Private repo with external LLM disabled | use evidence-only context and citations |

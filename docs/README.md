@@ -22,12 +22,10 @@ DevOnboard scans a repository, ingests development history, extracts design rati
 ```bash
 cp .env.example .env
 git clone https://github.com/nextlevelbuilder/goclaw target_repo
-devonboard scan --repo target_repo
-devonboard ingest-history --repo target_repo
 make up
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000`, then use the workspace controls to run Scan and Ingest History.
 
 ---
 
@@ -38,6 +36,10 @@ devonboard/knowledge-graph.json
 ```
 
 This graph is the durable memory layer. Optional indexes can be rebuilt from it.
+
+## MVP Interface
+
+DevOnboard MVP is a local web app backed by FastAPI. Scan, ingest, query, evidence-pack generation, and benchmark runs are triggered from the web workspace. A public CLI is out of scope for MVP and may be added later as a thin API wrapper.
 
 ---
 

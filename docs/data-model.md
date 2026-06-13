@@ -163,7 +163,25 @@ class RouteDecision(BaseModel):
 
 class Evidence(BaseModel):
     node_id: str
-    type: Literal["file", "function", "commit", "pr", "issue", "review", "claim", "entity"]
+    type: Literal[
+        "file",
+        "function",
+        "class",
+        "module",
+        "service",
+        "endpoint",
+        "config",
+        "domain",
+        "flow",
+        "step",
+        "commit",
+        "pr",
+        "issue",
+        "review",
+        "claim",
+        "entity",
+        "topic",
+    ]
     label: str
     summary: str
     url: str | None = None
@@ -178,6 +196,7 @@ class QueryResponse(BaseModel):
     warnings: list[str] = []
     retrieval_ms: int
     synthesis_ms: int
+    evidence_only: bool = False
 
 class EvidencePack(BaseModel):
     purpose: Literal["pr_review", "ai_agent_context"]
@@ -185,6 +204,7 @@ class EvidencePack(BaseModel):
     citations: list[Evidence]
     warnings: list[str] = []
     excluded_sources: list[str] = []
+    evidence_only: bool = False
 ```
 
 ---
@@ -201,8 +221,8 @@ class MetricRow(BaseModel):
     evidence_count: int
     input_tokens: int | None = None
     output_tokens: int | None = None
-    evidence_usefulness_score: int | None = None
-    human_quality_score: int | None = None
+    evidence_usefulness_score: int | None = None  # computed 1-5 score, see RAG.md
+    human_quality_score: int | None = None        # manual evaluator rating
 
 class BenchmarkRun(BaseModel):
     run_id: str

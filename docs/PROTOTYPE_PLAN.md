@@ -1,55 +1,13 @@
 # Prototype Plan: DevOnboard MVP Validation
 
----
+This document points to the official product prototype plan. To ensure documentation integrity and avoid duplicate versions, please refer to the main artifact:
 
-## Riskiest Assumption
-
-Engineers will trust AI onboarding more when the answer exposes both code evidence and historical evidence they can verify quickly.
+*   **Official Prototype Plan:** [07_prototype.md](./product_artifacts/07_prototype.md)
 
 ---
 
-## Prototype Scope
+## Quick Summary of Scope
 
-The prototype validates one flow only:
-
-```text
-load prepared repo context
-  -> select a code node
-  -> inspect History/Why evidence
-  -> ask a hybrid refactor-risk question
-  -> verify citations/raw evidence
-  -> copy a bounded evidence pack for review or agent context
-```
-
----
-
-## Included Screens
-
-- Workspace shell with loaded demo repo.
-- Graph or file/subsystem navigation.
-- Node inspector with History/Why panel.
-- Hybrid answer panel with citations.
-- Benchmark snapshot comparing DevOnboard with a plain answer.
-- Evidence pack preview with copy/export action.
-
----
-
-## Out Of Scope
-
-- Authentication.
-- Billing.
-- Multi-repo administration.
-- User/team permissions.
-- Settings screens beyond basic repo status.
-- Full graph editing.
-- Automatic code modification.
-- Uploading private source to external LLMs without explicit opt-in.
-
----
-
-## Success Criteria
-
-- A user can verify one historical rationale claim from raw evidence within 60 seconds.
-- A user can identify at least one affected code area and one linked historical evidence item for a refactor-risk question.
-- A user can explain why the DevOnboard answer is more trustworthy than a plain uncited answer.
-- A user can copy a cited evidence pack that excludes secrets, generated files, vendor files, and unsupported rationale.
+*   **Happy Path Flow:** User loads the `nextlevelbuilder/goclaw` demo repo, selects a code node, views the History/Why context panel instantly, asks a hybrid risk question, inspects raw commit/PR citations on hover, and exports a copyable Markdown PR review evidence pack.
+*   **Fidelity & Style:** High-fidelity interactive web workspace using the light, dense, engineer-native design system in `devonboard-design/`.
+*   **Faked Backend:** The local knowledge graph is loaded from the pre-generated `knowledge-graph.json` fixture to ensure reproducibility and instant response during user testing.

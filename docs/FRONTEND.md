@@ -22,7 +22,7 @@ TopNav
 
 Main Workspace
   Left: graph/file/subsystem navigation
-  Center: Q&A thread and streamed answer
+  Center: Q&A thread and cited answer
   Right: History/Why inspector
 
 Benchmark View
@@ -36,7 +36,7 @@ Benchmark View
 - `GraphPane`: visual or list-based graph explorer.
 - `NodeInspector`: selected node overview.
 - `HistoryPanel`: commits, PRs, issues, claims, authors.
-- `QueryPanel`: mode selector, input, streamed answer.
+- `QueryPanel`: mode selector, input, answer, citations, and retrieved context.
 - `CitationCard`: file, commit, PR, issue, claim evidence.
 - `BenchmarkPanel`: stored benchmark runs.
 - `EvidencePackPanel`: copyable PR review and AI-agent context packs.
@@ -75,7 +75,7 @@ Evidence should be compact, clickable, and grouped by type.
 - No repo loaded.
 - Scan running.
 - History ingest running.
-- Query streaming.
+- Query running.
 - Selected node with no history.
 - Selected node with multiple evidence types.
 - Benchmark running.

@@ -2,7 +2,7 @@
   "openapi": "3.0.3",
   "info": {
     "title": "DevOnboard API",
-    "description": "Local codebase institutional-memory API for scan, history ingest, graph retrieval, cited answers, evidence packs, and benchmarks.",
+    "description": "Local web-backed codebase institutional-memory API for scan, history ingest, graph retrieval, cited answers, evidence packs, and benchmarks.",
     "version": "0.1.0"
   },
   "servers": [
@@ -126,7 +126,7 @@
         },
         "responses": {
           "200": {
-            "description": "Full query response with citations",
+            "description": "Query response with citations",
             "content": {
               "application/json": {
                 "schema": {
@@ -135,46 +135,11 @@
               }
             }
           },
+          "404": {
+            "$ref": "#/components/responses/APIError"
+          },
           "422": {
             "$ref": "#/components/responses/APIError"
-          }
-        }
-      }
-    },
-    "/query/stream": {
-      "get": {
-        "summary": "Stream a cited query response via SSE",
-        "operationId": "getQueryStream",
-        "parameters": [
-          {
-            "name": "q",
-            "in": "query",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "minLength": 1
-            },
-            "description": "The user query"
-          },
-          {
-            "name": "mode",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "$ref": "#/components/schemas/QueryMode"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Server-Sent Events stream of StreamChunk objects",
-            "content": {
-              "text/event-stream": {
-                "schema": {
-                  "$ref": "#/components/schemas/StreamChunk"
-                }
-              }
-            }
           }
         }
       }
@@ -256,16 +221,29 @@
               }
             }
           },
+          "404": {
+            "$ref": "#/components/responses/APIError"
+          },
           "422": {
             "$ref": "#/components/responses/APIError"
           }
         }
       }
     },
-    "/benchmark/run": {
+    "/benchmark": {
       "post": {
         "summary": "Run fixed benchmark comparison",
-        "operationId": "postBenchmarkRun",
+        "operationId": "postBenchmark",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BenchmarkRequest"
+              }
+            }
+          }
+        },
         "responses": {
           "202": {
             "description": "Benchmark started",
@@ -276,6 +254,9 @@
                 }
               }
             }
+          },
+          "422": {
+            "$ref": "#/components/responses/APIError"
           }
         }
       }
@@ -460,6 +441,10 @@
         "enum": ["auto", "structural", "historical", "hybrid"],
         "default": "auto"
       },
+      "Route": {
+        "type": "string",
+        "enum": ["structural", "historical", "hybrid"]
+      },
       "QueryRequest": {
         "type": "object",
         "required": ["query"],
@@ -471,6 +456,12 @@
           "mode": {
             "$ref": "#/components/schemas/QueryMode"
           },
+          "node_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
           "allow_external_llm_for_private_repo": {
             "type": "boolean",
             "default": false
@@ -479,13 +470,13 @@
       },
       "QueryResponse": {
         "type": "object",
-        "required": ["answer", "route", "citations"],
+        "required": ["answer", "route", "citations", "retrieval_ms", "synthesis_ms"],
         "properties": {
           "answer": {
             "type": "string"
           },
           "route": {
-            "$ref": "#/components/schemas/QueryMode"
+            "$ref": "#/components/schemas/Route"
           },
           "structural": {
             "type": "array",
@@ -520,42 +511,10 @@
           "total_tokens": {
             "type": "integer",
             "nullable": true
-          }
-        }
-      },
-      "StreamChunk": {
-        "type": "object",
-        "properties": {
-          "type": {
-            "type": "string",
-            "enum": ["token", "citation", "metadata", "warning", "error", "done"]
           },
-          "content": {
-            "type": "string"
-          },
-          "citation": {
-            "$ref": "#/components/schemas/Evidence"
-          },
-          "metadata": {
-            "$ref": "#/components/schemas/ResponseMetadata"
-          }
-        }
-      },
-      "ResponseMetadata": {
-        "type": "object",
-        "properties": {
-          "route": {
-            "$ref": "#/components/schemas/QueryMode"
-          },
-          "retrieval_ms": {
-            "type": "integer"
-          },
-          "synthesis_ms": {
-            "type": "integer"
-          },
-          "total_tokens": {
-            "type": "integer",
-            "nullable": true
+          "evidence_only": {
+            "type": "boolean",
+            "default": false
           }
         }
       },
@@ -568,7 +527,7 @@
           },
           "type": {
             "type": "string",
-            "enum": ["file", "function", "commit", "pr", "issue", "review", "claim", "entity"]
+            "enum": ["file", "function", "class", "module", "service", "endpoint", "config", "domain", "flow", "step", "commit", "pr", "issue", "review", "claim", "entity", "topic"]
           },
           "label": {
             "type": "string"
@@ -611,6 +570,25 @@
             "items": {
               "type": "object"
             }
+          },
+          "benchmark_runs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/BenchmarkRunSummary"
+            }
+          }
+        }
+      },
+      "BenchmarkRunSummary": {
+        "type": "object",
+        "required": ["run_id", "created_at"],
+        "properties": {
+          "run_id": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
           }
         }
       },
@@ -678,7 +656,7 @@
       },
       "EvidencePack": {
         "type": "object",
-        "required": ["purpose", "markdown", "citations", "warnings"],
+        "required": ["purpose", "markdown", "citations", "warnings", "excluded_sources"],
         "properties": {
           "purpose": {
             "type": "string",
@@ -704,21 +682,45 @@
             "items": {
               "type": "string"
             }
+          },
+          "evidence_only": {
+            "type": "boolean",
+            "default": false
+          }
+        }
+      },
+      "BenchmarkRequest": {
+        "type": "object",
+        "properties": {
+          "repo": {
+            "type": "string"
+          },
+          "target_branch": {
+            "type": "string",
+            "default": "dev"
+          },
+          "target_commit": {
+            "type": "string",
+            "nullable": true
           }
         }
       },
       "BenchmarkRunStarted": {
         "type": "object",
-        "required": ["run_id"],
+        "required": ["run_id", "status"],
         "properties": {
           "run_id": {
             "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["running"]
           }
         }
       },
       "BenchmarkRun": {
         "type": "object",
-        "required": ["run_id", "repo", "rows", "created_at"],
+        "required": ["run_id", "repo", "target_branch", "rows", "created_at"],
         "properties": {
           "run_id": {
             "type": "string"
@@ -780,13 +782,15 @@
             "type": "integer",
             "nullable": true,
             "minimum": 1,
-            "maximum": 5
+            "maximum": 5,
+            "description": "Computed score from evidence coverage, direct citations, evidence diversity, and unsupported-claim warnings."
           },
           "human_quality_score": {
             "type": "integer",
             "nullable": true,
             "minimum": 1,
-            "maximum": 5
+            "maximum": 5,
+            "description": "Manual evaluator rating."
           }
         }
       },

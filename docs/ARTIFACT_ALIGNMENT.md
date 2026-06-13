@@ -6,14 +6,14 @@
 
 | Rule | Status | Evidence |
 |---|---|---|
-| Start with problem, not model | Pass | `docs/spec.md` opens with onboarding/history pain |
-| Eight core artifacts exist | Pass | `docs/product_artifacts/README.md` |
+| Start with problem, not model | Pass | [00_problem_statement.md](./product_artifacts/00_problem_statement.md) and [06_prd.md](./product_artifacts/06_prd.md) open with onboarding/history pain |
+| Eight core artifacts exist | Pass | [product_artifacts/README.md](./product_artifacts/README.md) lists `00_problem_statement.md` through `07_prototype.md` |
 | Context pack is self-contained | Pass | `00_problem_statement.md` through `05_use_cases/` and `ai_in_practice/` live inside `devonboard/` |
-| PRD/spec focuses on what and why | Pass | Implementation details live in architecture/data-model/API docs |
-| Out of scope is explicit | Pass | `docs/spec.md` Non-Goals |
-| Roadmap uses themes/outcomes | Pass | `docs/ROADMAP.md` |
-| Prototype tests riskiest assumption only | Pass | `docs/PROTOTYPE_PLAN.md` |
-| Persona details are relevant | Pass | `03_target_users/user_segments_and_behaviors.md` |
+| PRD/spec focuses on what and why | Pass | [06_prd.md](./product_artifacts/06_prd.md) focuses on user outcomes, implementation details are separated |
+| Out of scope is explicit | Pass | [06_prd.md](./product_artifacts/06_prd.md) "Scope - Out of Scope" section |
+| Roadmap uses themes/outcomes | Pass | [05_product_roadmap.md](./product_artifacts/05_product_roadmap.md) |
+| Prototype tests riskiest assumption only | Pass | [07_prototype.md](./product_artifacts/07_prototype.md) |
+| Persona details are relevant | Pass | [02_persona.md](./product_artifacts/02_persona.md) and `03_target_users/` |
 
 ---
 

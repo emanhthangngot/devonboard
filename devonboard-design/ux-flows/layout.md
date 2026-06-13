@@ -26,7 +26,7 @@ select repo context -> inspect graph/history -> ask cited questions
 │ GraphPane /    │ QueryPanel                     │ History/Why        │
 │ File/Subsystem │ - mode selector                │ Inspector          │
 │ Navigation     │ - Q&A thread                   │ - linked sources   │
-│                │ - streamed answer + citations  │ - claims           │
+│                │ - answer + citations            │ - claims           │
 │                │                                 │ - authors/reviewers│
 │                │                                 │ - risks            │
 └───────────────┴──────────────────────────────┴────────────────────┘

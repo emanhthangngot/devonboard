@@ -38,7 +38,7 @@
 - [ ] Create structural nodes and edges.
 - [ ] Add file/module summaries.
 
-**Checkpoint:** `devonboard scan --repo target_repo` creates a usable structural graph.
+**Checkpoint:** The web workspace **Run Scan** action calls `POST /scan` and creates a usable structural graph.
 
 ---
 
@@ -73,4 +73,4 @@
 - [ ] Build benchmark dashboard.
 - [ ] Add quickstart and demo script.
 
-**Checkpoint:** full demo runs locally with cited answers and benchmark output.
+**Checkpoint:** full web demo runs locally with cited answers, evidence packs, and benchmark output.

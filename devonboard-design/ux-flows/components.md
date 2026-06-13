@@ -41,14 +41,13 @@
 **Responsibilities:**
 - Mode selector: `auto | structural | historical | hybrid` (maps to `QueryRequest.mode`).
 - Multiline query input with submit (Enter to submit, Shift+Enter for newline).
-- Render Q&A thread: each turn = user query + streamed answer + citations + controls.
+- Render Q&A thread: each turn = user query + answer + citations + controls.
 
 **Behavior:**
 - On submit, immediately show the user query in the thread and a loading indicator
   for the answer (do not wait for the full response to render anything).
-- As soon as `route` is known (from `RouteDecision`), show a small route badge
-  (`structural` / `historical` / `hybrid`) next to the answer — even before synthesis
-  completes.
+- When the `POST /query` response returns, show a small route badge
+  (`structural` / `historical` / `hybrid`) next to the answer.
 - Hybrid answers render with labeled sections per AI.md §4: "Structural impact",
   "Historical context", "Refactor guidance" — only render sections that have content,
   but if historical evidence was expected and is absent, render the section with the
@@ -128,7 +127,7 @@
 - Run and display benchmark comparisons (`BenchmarkRun` / `MetricRow` models).
 
 **Behavior:**
-- "Run Benchmark" runs the fixed 5-query set (AI.md §6) in both `devonboard` and
+- "Run Benchmark" calls `POST /benchmark` and runs the fixed 5-query set (AI.md §6) in both `devonboard` and
   `plain_agent` modes.
 - Comparison table: one row per query, columns grouped by mode (devonboard |
   plain_agent), metrics = time-to-useful-answer, citations count, evidence count,

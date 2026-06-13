@@ -40,7 +40,7 @@
 ## 4. Empty States
 
 - Always include the cause and the next action:
-  - "No graph found. Run `devonboard scan --repo target_repo` or click Run Scan."
+  - "No graph found. Click Run Scan to get started."
   - "No linked commits found for this node."
   - "Select a file, function, or module to see its History/Why context."
 

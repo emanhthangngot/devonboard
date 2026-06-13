@@ -135,14 +135,17 @@ API surface:
 
 ```text
 POST /scan
+GET  /scan/status
 POST /ingest/history
+GET  /ingest/history/status
 POST /query
-GET  /query/stream
 GET  /graph
 GET  /graph/node/{id}/history
 POST /evidence-packs
-POST /benchmark/run
+POST /benchmark
 GET  /benchmark/results
+GET  /benchmark/results/{run_id}
+GET  /health
 ```
 
 ---
@@ -155,7 +158,7 @@ The first screen is the usable product workspace:
 TopNav: repo, graph status, scan/ingest controls
 Main:
   Left  -> graph/file/subsystem navigation
-  Center -> Q&A and streamed answers
+  Center -> Q&A and cited answers
   Right -> History/Why inspector for selected node
 Benchmark tab -> comparison table and charts
 ```
@@ -204,7 +207,7 @@ user query
   -> graph retrieval
   -> optional vector expansion
   -> context assembly
-  -> grounded synthesis
+  -> grounded synthesis or evidence-only fallback
   -> citations + answer
 ```
 

@@ -18,14 +18,17 @@ backend/app/
 Core routers:
 
 - `POST /scan`
+- `GET /scan/status`
 - `POST /ingest/history`
+- `GET /ingest/history/status`
 - `POST /query`
-- `GET /query/stream`
 - `GET /graph`
 - `GET /graph/node/{id}/history`
 - `POST /evidence-packs`
-- `POST /benchmark/run`
+- `POST /benchmark`
 - `GET /benchmark/results`
+- `GET /benchmark/results/{run_id}`
+- `GET /health`
 
 ---
 
@@ -82,7 +85,7 @@ Commit-only ingest is a valid fallback.
 
 `RationaleExtractor` creates claim candidates from source evidence.
 
-`SynthesisService` creates blocking and streaming answers from retrieved evidence.
+`SynthesisService` creates grounded answers from retrieved evidence and returns evidence-only responses when synthesis is unavailable or external LLM use is disabled.
 
 All AI calls must use retry/backoff and must expose errors clearly.
 
@@ -94,7 +97,7 @@ Benchmark service:
 
 - loads fixed query set;
 - runs DevOnboard and plain-agent modes;
-- records time-to-useful-answer, evidence count, citation count, token estimates, evidence usefulness score, and human quality score;
+- records time-to-useful-answer, evidence count, citation count, token estimates, computed evidence usefulness score, and optional human quality score;
 - writes immutable JSON results.
 
 Evidence pack service:
@@ -102,3 +105,5 @@ Evidence pack service:
 - creates PR review and AI-agent context packs from graph evidence;
 - excludes secrets, generated/vendor files, and unsupported rationale;
 - returns copyable Markdown plus citations and warnings.
+- for `pr_review`, emphasizes changed files, blast radius, recent linked history, risks, contradictions, and review questions;
+- for `ai_agent_context`, emits compact cited constraints, relevant interfaces/files, safety warnings, and evidence-only output when private-repo opt-in is absent.

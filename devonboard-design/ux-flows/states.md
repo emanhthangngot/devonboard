@@ -23,7 +23,7 @@
 | State | Trigger | UI |
 |---|---|---|
 | Idle / empty thread | No queries yet | Show 3–5 suggested demo queries (clickable, from AI.md benchmark set) as chips/list. |
-| Query streaming | `GET /query/stream` active | Answer text streams progressively with trailing cursor indicator. Mode/route badge appears as soon as route is known (don't wait for full answer). |
+| Query running | `POST /query` active | Answer area shows loading state. Mode/route badge appears as soon as the response returns. |
 | Answer with citations | Stream complete, citations present | Citations rendered as inline chips + linked to right panel CitationCards. "Mark unsupported" and "Open raw evidence" controls visible. |
 | Answer with no historical evidence | Historical route/section empty | Explicit line: "No historical evidence found for this query." — never omit the section silently. |
 | Query too broad | Backend signals broad/ambiguous query | Show clarification prompt + "top subsystems" suggestions with caveat text, plus a "Retry with narrower scope" action. |
@@ -82,7 +82,7 @@
 | State | Trigger | UI |
 |---|---|---|
 | No runs yet | `benchmark_runs` empty | Empty state: "Run a benchmark to compare DevOnboard with a plain-agent answer." + Run button. |
-| Running | `POST /benchmark/run` in progress | Per-query progress rows (devonboard / plain_agent), spinner per cell being computed. |
+| Running | `POST /benchmark` in progress | Per-query progress rows (devonboard / plain_agent), spinner per cell being computed. |
 | Completed | Results stored | Comparison table fully populated + charts rendered. |
 | Run failed (partial) | Some queries errored | Failed rows show `--color-error` cell with retry icon; completed rows still shown. |
 
