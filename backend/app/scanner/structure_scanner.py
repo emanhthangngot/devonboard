@@ -7,6 +7,8 @@ from backend.app.graph.ids import edge_id, file_id, function_id, module_id, norm
 from backend.app.graph.models import GraphEdge, GraphNode, KnowledgeGraph, RepoMeta
 
 GO_FUNCTION_RE = re.compile(r"^func\s+(?:\([^)]*\)\s*)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", re.MULTILINE)
+GO_IMPORT_RE = re.compile(r'import\s+(?:\((?P<block>.*?)\)|"(?P<single>[^"]+)")', re.DOTALL)
+GO_IMPORT_PATH_RE = re.compile(r'"([^"]+)"')
 GO_TYPE_RE = re.compile(r"^type\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+", re.MULTILINE)
 
 
@@ -17,11 +19,14 @@ class StructureScanner:
         branch: str,
         commit: str | None,
         exclude_patterns: list[str],
+        repo_url: str | None = None,
     ) -> None:
         self.repo_path = repo_path.resolve()
         self.branch = branch
         self.commit = commit
         self.exclude_patterns = exclude_patterns
+        self.repo_url = repo_url
+        self.go_module = self._read_go_module()
 
     def scan(self) -> KnowledgeGraph:
         if not self.repo_path.exists() or not self.repo_path.is_dir():
@@ -34,6 +39,7 @@ class StructureScanner:
                 path=str(self.repo_path),
                 branch=self.branch,
                 commit=self.commit,
+                url=self.repo_url,
             ),
         )
 
@@ -71,6 +77,7 @@ class StructureScanner:
         if relative.endswith(".go"):
             text = path.read_text(encoding="utf-8", errors="ignore")
             self._add_go_symbols(store, relative, text, file_node.id)
+            self._add_go_import_edges(store, relative, text, file_node.id)
 
     def _add_modules(self, store: GraphStore, relative: str, child_id: str) -> None:
         parent = Path(relative).parent
@@ -172,3 +179,48 @@ class StructureScanner:
             ".yaml": "yaml",
             ".yml": "yaml",
         }.get(suffix)
+
+    def _read_go_module(self) -> str | None:
+        go_mod = self.repo_path / "go.mod"
+        if not go_mod.exists():
+            return None
+        for line in go_mod.read_text(encoding="utf-8", errors="ignore").splitlines():
+            if line.startswith("module "):
+                return line.split(None, 1)[1].strip()
+        return None
+
+    def _add_go_import_edges(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
+        if not self.go_module:
+            return
+        imports: list[str] = []
+        for match in GO_IMPORT_RE.finditer(text):
+            if match.group("single"):
+                imports.append(match.group("single"))
+            else:
+                imports.extend(GO_IMPORT_PATH_RE.findall(match.group("block") or ""))
+        for import_path in sorted(set(imports)):
+            if not import_path.startswith(f"{self.go_module}/"):
+                continue
+            module_path = normalize_repo_path(import_path.removeprefix(f"{self.go_module}/"))
+            target_id = module_id(module_path)
+            store.upsert_node(
+                GraphNode(
+                    id=target_id,
+                    type="module",
+                    name=Path(module_path).name,
+                    summary=f"Module imported from {module_path}.",
+                    tags=["module", "imported"],
+                    filePath=module_path,
+                )
+            )
+            store.upsert_edge(
+                GraphEdge(
+                    id=edge_id(file_node_id, target_id, "imports"),
+                    source=file_node_id,
+                    target=target_id,
+                    type="imports",
+                    summary=f"File imports {import_path}.",
+                    weight=0.7,
+                    metadata={"importPath": import_path},
+                )
+            )
