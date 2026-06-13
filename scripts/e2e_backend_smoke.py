@@ -8,6 +8,8 @@ from backend.app.graph.models import RepoMeta
 from backend.app.ingest.git_extractor import GitHistoryIngestor
 from backend.app.main import health
 from backend.app.scanner.structure_scanner import StructureScanner
+from backend.app.services.benchmark import BenchmarkService
+from backend.app.services.evidence_pack import EvidencePackService
 from backend.app.services.retrieval import RetrievalService
 
 
@@ -52,9 +54,24 @@ def main() -> None:
         )
         if not result.citations:
             raise SystemExit("query did not return citations")
+        pack = EvidencePackService(loaded.graph).create(
+            purpose="pr_review",
+            query="Review main",
+            changed_files=["main.go"],
+        )
+        if not pack["citations"]:
+            raise SystemExit("evidence pack did not return citations")
+        run = BenchmarkService(
+            loaded.graph,
+            results_dir=Path(temp_dir) / "benchmark" / "results",
+        ).run(repo="repo", target_branch="dev", target_commit="smoke")
+        if len(run["rows"]) != 10:
+            raise SystemExit("benchmark did not create fixed query comparison rows")
         print("backend smoke: scan graph ok")
         print("backend smoke: history ingest ok")
         print("backend smoke: cited query ok")
+        print("backend smoke: evidence pack ok")
+        print("backend smoke: benchmark ok")
 
 
 if __name__ == "__main__":

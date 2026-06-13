@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import get_settings
+from backend.app.routers.benchmark import router as benchmark_router
+from backend.app.routers.evidence_packs import router as evidence_packs_router
 from backend.app.routers.graph import router as graph_router
 from backend.app.routers.ingest import router as ingest_router
 from backend.app.routers.query import router as query_router
@@ -25,6 +27,8 @@ app.include_router(scan_router)
 app.include_router(ingest_router)
 app.include_router(graph_router)
 app.include_router(query_router)
+app.include_router(evidence_packs_router)
+app.include_router(benchmark_router)
 
 
 @app.get("/health")
