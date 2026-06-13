@@ -54,6 +54,13 @@ Open:
 http://localhost:3000
 ```
 
+Run the verification suite:
+
+```bash
+make test
+make e2e
+```
+
 ---
 
 ## Build Graph From The Web UI

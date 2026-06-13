@@ -21,11 +21,11 @@
 
 ## Phase 2 — Graph Core
 
-- [ ] Define graph models.
-- [ ] Implement deterministic ID helpers.
-- [ ] Implement JSON graph store.
-- [ ] Implement upsert/merge logic.
-- [ ] Test idempotent merge behavior.
+- [x] Define graph models.
+- [x] Implement deterministic ID helpers.
+- [x] Implement JSON graph store.
+- [x] Implement upsert/merge logic.
+- [x] Test idempotent merge behavior.
 
 **Checkpoint:** graph can be created, saved, loaded, and updated without duplicate nodes.
 
@@ -33,10 +33,10 @@
 
 ## Phase 3 — Structure Scanner
 
-- [ ] Implement file inventory with ignore patterns.
-- [ ] Extract supported symbols and imports.
-- [ ] Create structural nodes and edges.
-- [ ] Add file/module summaries.
+- [x] Implement file inventory with ignore patterns.
+- [x] Extract supported symbols and imports.
+- [x] Create structural nodes and edges.
+- [x] Add file/module summaries.
 
 **Checkpoint:** The web workspace **Run Scan** action calls `POST /scan` and creates a usable structural graph.
 
@@ -44,10 +44,10 @@
 
 ## Phase 4 — History Ingest
 
-- [ ] Extract commit metadata and touched files.
+- [x] Extract commit metadata and touched files.
 - [ ] Fetch PR/issue/review metadata.
-- [ ] Create source/entity nodes.
-- [ ] Link sources to files/functions/modules.
+- [x] Create source/entity nodes.
+- [x] Link sources to files/functions/modules.
 
 **Checkpoint:** selected file nodes show linked commits/PRs.
 
@@ -55,11 +55,11 @@
 
 ## Phase 5 — Claims And Retrieval
 
-- [ ] Extract explicit rationale claims.
-- [ ] Link claims to sources.
-- [ ] Implement structural retrieval.
-- [ ] Implement historical retrieval.
-- [ ] Implement hybrid retrieval.
+- [x] Extract explicit rationale claims.
+- [x] Link claims to sources.
+- [x] Implement structural retrieval.
+- [x] Implement historical retrieval.
+- [x] Implement hybrid retrieval.
 
 **Checkpoint:** structural, historical, and hybrid test queries return evidence lists.
 
@@ -67,10 +67,21 @@
 
 ## Phase 6 — API, UI, Benchmark
 
-- [ ] Add scan, ingest, query, graph, and benchmark endpoints.
-- [ ] Build workspace UI.
-- [ ] Build History/Why inspector.
-- [ ] Build benchmark dashboard.
-- [ ] Add quickstart and demo script.
+- [x] Add scan, ingest, query, graph, and benchmark endpoints.
+- [x] Build workspace UI.
+- [x] Build History/Why inspector.
+- [x] Build benchmark dashboard.
+- [x] Add quickstart and demo script.
 
 **Checkpoint:** full web demo runs locally with cited answers, evidence packs, and benchmark output.
+
+---
+
+## Implementation Status
+
+- [x] Root `Makefile` runs backend tests, frontend tests, build, and E2E smoke.
+- [x] FastAPI backend exposes health, scan, ingest, graph, query, evidence-pack, and benchmark routes.
+- [x] Next.js frontend provides a Claude-style workspace and benchmark dashboard.
+- [x] E2E smoke covers scan, history ingest, cited query, evidence pack, and benchmark.
+- [ ] GitHub PR, issue, and review metadata enrichment remains a follow-up beyond local Git history ingest.
+- [ ] Full documentation rewrite in Phase 1 remains a separate content pass.
