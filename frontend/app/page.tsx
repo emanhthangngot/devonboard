@@ -306,15 +306,86 @@ export default function Home() {
       },
     ]);
     try {
-      const payload = await requestJson<Omit<QueryTurn, "id" | "query" | "status">>("/query", {
+      const response = await fetch(`${backendUrl}/query/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query: activeQuery, mode, node_ids: selectedNode ? [selectedNode.id] : [] }),
+        body: JSON.stringify({
+          query: activeQuery,
+          mode,
+          node_ids: selectedNode ? [selectedNode.id] : [],
+          allow_external_llm_for_private_repo: true,
+        }),
       });
-      setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, ...payload, status: "done" } : turn)));
+
+      if (!response.ok) {
+        let errMsg = `Server returned status ${response.status}`;
+        try {
+          const payload = await response.json();
+          errMsg = payload?.error?.message || payload?.detail || errMsg;
+        } catch {}
+        throw new Error(errMsg);
+      }
+
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("Readable stream not supported");
+      }
+
+      const decoder = new TextDecoder("utf-8");
+      let buffer = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const parts = buffer.split("\n\n");
+        buffer = parts.pop() || "";
+
+        for (const part of parts) {
+          if (!part.trim()) continue;
+          let eventType = "";
+          let dataStr = "";
+
+          const lines = part.split("\n");
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              eventType = line.substring(6).trim();
+            } else if (line.startsWith("data:")) {
+              dataStr = line.substring(5).trim();
+            }
+          }
+
+          if (!eventType || !dataStr) continue;
+
+          try {
+            const data = JSON.parse(dataStr);
+            if (eventType === "route") {
+              setTurns((current) => current.map((t) => (t.id === id ? { ...t, route: data.route } : t)));
+            } else if (eventType === "citations") {
+              setTurns((current) => current.map((t) => (t.id === id ? { ...t, citations: data.citations } : t)));
+            } else if (eventType === "warnings") {
+              setTurns((current) => current.map((t) => (t.id === id ? { ...t, warnings: data.warnings } : t)));
+            } else if (eventType === "token") {
+              setTurns((current) =>
+                current.map((t) => {
+                  if (t.id === id) {
+                    return { ...t, answer: t.answer + data.token };
+                  }
+                  return t;
+                })
+              );
+            }
+          } catch (e) {
+            console.error("Failed to parse SSE data:", e);
+          }
+        }
+      }
+
+      setTurns((current) => current.map((t) => (t.id === id ? { ...t, status: "done" } : t)));
     } catch (error) {
       const message = errorMessage(error, "Query failed.");
-      setTurns((current) => current.map((turn) => (turn.id === id ? { ...turn, answer: message, status: "error", warnings: [message] } : turn)));
+      setTurns((current) => current.map((t) => (t.id === id ? { ...t, answer: message, status: "error", warnings: [message] } : t)));
       setBanner({ tone: "error", message });
     } finally {
       setIsAsking(false);

@@ -15,6 +15,17 @@ class GitHistoryIngestor:
     def ingest(self) -> KnowledgeGraph:
         for sha in self._commit_shas():
             self._ingest_commit(sha)
+        
+        # Enforce GITHUB_TOKEN enrichment for issues, PRs, and reviews if configured
+        from backend.app.config import get_settings
+        settings = get_settings()
+        if settings.github_token:
+            try:
+                from backend.app.ingest.github_fetcher import GitHubFetcher
+                GitHubFetcher(self.graph, settings.github_token).enrich()
+            except Exception as e:
+                print(f"Failed to enrich graph with GitHub metadata: {e}")
+
         RationaleExtractor(self.graph).extract()
         self.graph.nodes.sort(key=lambda node: node.id)
         self.graph.edges.sort(key=lambda edge: edge.id)

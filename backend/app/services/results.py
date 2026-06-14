@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from backend.app.graph.models import KnowledgeGraph
-from backend.app.services.retrieval import RetrievalService
+from backend.app.services.retrieval import QueryResult, RetrievalService, STRUCTURAL_TYPES, HISTORICAL_TYPES
 
 RESULT_QUERIES = [
     "How does the agent pipeline execute a tool call?",
@@ -35,7 +35,7 @@ class ResultService:
                     "citations_count": len(result.citations),
                     "evidence_count": len(result.structural) + len(result.historical),
                     "warnings_count": len(result.warnings),
-                    "evidence_usefulness_score": self._score(result.citations, result.warnings),
+                    "evidence_usefulness_score": self._evidence_usefulness_score(result),
                     "human_quality_score": None,
                 }
             )
@@ -65,6 +65,57 @@ class ResultService:
             return None
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def _score(self, citations: list[dict[str, object]], warnings: list[str]) -> int:
-        score = 1 + min(3, len(citations)) - min(1, len(warnings))
-        return max(1, min(5, score))
+    def _evidence_usefulness_score(self, result: QueryResult) -> int:
+        """Deterministic 1-5 score per RAG.md §8.
+
+        score = clamp_1_5(round(
+            1
+            + 1.0 * has_direct_structural_evidence
+            + 1.0 * has_direct_historical_evidence
+            + 1.0 * citation_coverage
+            + 0.5 * evidence_diversity
+            + 0.5 * no_unsupported_claims
+        ))
+        """
+        structural_types = {str(item.get("type", "")) for item in result.structural}
+        historical_types = {str(item.get("type", "")) for item in result.historical}
+
+        has_direct_structural = 1.0 if any(
+            t in STRUCTURAL_TYPES for t in structural_types
+        ) else 0.0
+
+        has_direct_historical = 1.0 if any(
+            t in (HISTORICAL_TYPES | {"commit", "pr", "review", "issue"})
+            for t in historical_types
+        ) else 0.0
+
+        total_evidence = len(result.structural) + len(result.historical)
+        citation_coverage = min(1.0, len(result.citations) / total_evidence) if total_evidence > 0 else 0.0
+
+        families: set[str] = set()
+        if result.structural:
+            families.add("structural")
+        for item in result.historical:
+            t = str(item.get("type", ""))
+            if t in {"commit", "pr", "review", "issue"}:
+                families.add("source")
+            elif t == "claim":
+                families.add("claim")
+        evidence_diversity = 1.0 if len(families) >= 2 else 0.0
+
+        unsupported_keywords = {"unsupported", "dropped", "no evidence", "no historical"}
+        has_unsupported = any(
+            any(kw in w.lower() for kw in unsupported_keywords)
+            for w in result.warnings
+        )
+        no_unsupported = 0.0 if has_unsupported else 1.0
+
+        raw = (
+            1.0
+            + 1.0 * has_direct_structural
+            + 1.0 * has_direct_historical
+            + 1.0 * citation_coverage
+            + 0.5 * evidence_diversity
+            + 0.5 * no_unsupported
+        )
+        return max(1, min(5, round(raw)))

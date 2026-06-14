@@ -25,18 +25,23 @@ def post_query(request: QueryRequest) -> dict[str, object]:
         query=request.query,
         mode=request.mode,
         node_ids=request.node_ids,
+        allow_external_llm=request.allow_external_llm_for_private_repo,
     ).as_dict()
 
 
 @router.post("/query/stream")
 def post_query_stream(request: QueryRequest) -> StreamingResponse:
-    result = post_query(request)
+    graph = _load_graph()
+    service = RetrievalService(graph)
 
     def events():
-        yield f"event: route\ndata: {json.dumps({'route': result['route']})}\n\n"
-        yield f"event: answer\ndata: {json.dumps({'answer': result['answer']})}\n\n"
-        yield f"event: citations\ndata: {json.dumps({'citations': result['citations']})}\n\n"
-        yield "event: done\ndata: {}\n\n"
+        for event in service.answer_stream(
+            query=request.query,
+            mode=request.mode,
+            node_ids=request.node_ids,
+            allow_external_llm=request.allow_external_llm_for_private_repo,
+        ):
+            yield f"event: {event['event']}\ndata: {json.dumps(event['data'])}\n\n"
 
     return StreamingResponse(events(), media_type="text/event-stream")
 

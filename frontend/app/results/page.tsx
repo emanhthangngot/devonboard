@@ -31,35 +31,28 @@ export default function ResultsPage() {
   const [isRunning, setIsRunning] = useState(false);
   const [banner, setBanner] = useState<string | null>(null);
 
-  useEffect(() => {
-    let active = true;
-    async function loadRuns() {
-      try {
-        const response = await fetch(`${backendUrl}/results/runs`);
-        if (!response.ok) {
-          if (active) setRuns([]);
-          return;
-        }
-        const payload = (await response.json()) as ResultRun[];
-        if (Array.isArray(payload)) {
-          if (active) {
-            setRuns(payload);
-            setSelectedRun((current) => current || payload[0] || null);
-          }
-        } else {
-          if (active) setRuns([]);
-        }
-      } catch {
-        if (active) {
-          setRuns([]);
-          setBanner("Result API unavailable - start FastAPI before measuring app results.");
-        }
+  async function loadRuns() {
+    try {
+      const response = await fetch(`${backendUrl}/results/runs`);
+      if (!response.ok) {
+        setRuns([]);
+        return;
       }
+      const payload = (await response.json()) as ResultRun[];
+      if (Array.isArray(payload)) {
+        setRuns(payload);
+        setSelectedRun((current) => current || payload[0] || null);
+      } else {
+        setRuns([]);
+      }
+    } catch {
+      setRuns([]);
+      setBanner("Result API unavailable - start FastAPI before measuring app results.");
     }
+  }
+
+  useEffect(() => {
     loadRuns();
-    return () => {
-      active = false;
-    };
   }, []);
 
   async function runResults() {

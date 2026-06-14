@@ -11,6 +11,22 @@ GO_IMPORT_RE = re.compile(r'import\s+(?:\((?P<block>.*?)\)|"(?P<single>[^"]+)")'
 GO_IMPORT_PATH_RE = re.compile(r'"([^"]+)"')
 GO_TYPE_RE = re.compile(r"^type\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+", re.MULTILINE)
 
+PYTHON_FUNCTION_RE = re.compile(r"^[ \t]*def\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", re.MULTILINE)
+PYTHON_CLASS_RE = re.compile(r"^[ \t]*class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:\(]", re.MULTILINE)
+PYTHON_FROM_IMPORT_RE = re.compile(r"^[ \t]*from\s+(?P<module>[A-Za-z0-9_\.]+)\s+import\s+(?P<names>[A-Za-z0-9_,\*\s\(\)]+)", re.MULTILINE)
+PYTHON_IMPORT_RE = re.compile(r"^[ \t]*import\s+(?P<module>[A-Za-z0-9_\.,\s]+)", re.MULTILINE)
+
+TSJS_FUNCTION_RE = re.compile(
+    r"^[ \t]*(?:export\s+(?:default\s+)?)?(?:async\s+)?function\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(|"
+    r"^[ \t]*(?:export\s+)?(?:const|let|var)\s+(?P<arrow_name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*(?:async\s*)?\([^)]*\)\s*=>",
+    re.MULTILINE
+)
+TSJS_CLASS_RE = re.compile(
+    r"^[ \t]*(?:export\s+(?:default\s+)?)?class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*",
+    re.MULTILINE
+)
+TSJS_IMPORT_RE = re.compile(r"^[ \t]*import\s+(?:.*\s+from\s+)?['\"](?P<path>[^'\"]+)['\"]", re.MULTILINE)
+
 
 class StructureScanner:
     def __init__(
@@ -78,6 +94,14 @@ class StructureScanner:
             text = path.read_text(encoding="utf-8", errors="ignore")
             self._add_go_symbols(store, relative, text, file_node.id)
             self._add_go_import_edges(store, relative, text, file_node.id)
+        elif relative.endswith((".py", ".pyw")):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            self._add_python_symbols(store, relative, text, file_node.id)
+            self._add_python_import_edges(store, relative, text, file_node.id)
+        elif relative.endswith((".ts", ".tsx", ".js", ".jsx")):
+            text = path.read_text(encoding="utf-8", errors="ignore")
+            self._add_tsjs_symbols(store, relative, text, file_node.id)
+            self._add_tsjs_import_edges(store, relative, text, file_node.id)
 
     def _add_modules(self, store: GraphStore, relative: str, child_id: str) -> None:
         parent = Path(relative).parent
@@ -151,12 +175,267 @@ class StructureScanner:
                 )
             )
 
+    def _add_python_symbols(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
+        for match in PYTHON_FUNCTION_RE.finditer(text):
+            name = match.group("name")
+            node = GraphNode(
+                id=function_id(relative, name),
+                type="function",
+                name=name,
+                summary=f"Python function {name} in {relative}.",
+                tags=["python", "function"],
+                filePath=relative,
+                metadata={"language": "python"},
+            )
+            store.upsert_node(node)
+            store.upsert_edge(
+                GraphEdge(
+                    id=edge_id(file_node_id, node.id, "contains"),
+                    source=file_node_id,
+                    target=node.id,
+                    type="contains",
+                    summary="File contains function.",
+                    weight=1.0,
+                )
+            )
+
+        for match in PYTHON_CLASS_RE.finditer(text):
+            name = match.group("name")
+            node = GraphNode(
+                id=f"class:{relative}:{name}",
+                type="class",
+                name=name,
+                summary=f"Python class {name} in {relative}.",
+                tags=["python", "class"],
+                filePath=relative,
+                metadata={"language": "python"},
+            )
+            store.upsert_node(node)
+            store.upsert_edge(
+                GraphEdge(
+                    id=edge_id(file_node_id, node.id, "contains"),
+                    source=file_node_id,
+                    target=node.id,
+                    type="contains",
+                    summary="File contains class.",
+                    weight=1.0,
+                )
+            )
+
+    def _add_python_import_edges(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
+        imported_modules = set()
+        for match in PYTHON_FROM_IMPORT_RE.finditer(text):
+            mod = match.group("module")
+            if mod:
+                imported_modules.add(mod)
+        for match in PYTHON_IMPORT_RE.finditer(text):
+            mods = match.group("module")
+            if mods:
+                for mod in re.split(r",\s*", mods):
+                    imported_modules.add(mod.strip())
+
+        for mod in imported_modules:
+            if mod.startswith("."):
+                dot_count = 0
+                for char in mod:
+                    if char == ".":
+                        dot_count += 1
+                    else:
+                        break
+                remaining = mod[dot_count:]
+                remaining_parts = remaining.split(".") if remaining else []
+                curr_parent = Path(relative).parent
+                target_dir = curr_parent
+                for _ in range(dot_count - 1):
+                    target_dir = target_dir.parent
+                candidate_paths = [
+                    (target_dir / Path(*remaining_parts)).with_suffix(".py"),
+                    (target_dir / Path(*remaining_parts)) / "__init__.py"
+                ]
+            else:
+                mod_parts = mod.split(".")
+                candidate_paths = [
+                    Path(*mod_parts).with_suffix(".py"),
+                    Path(*mod_parts) / "__init__.py"
+                ]
+
+            resolved_rel = None
+            for p in candidate_paths:
+                try:
+                    full_p = (self.repo_path / p).resolve()
+                    if full_p.is_file() and full_p.is_relative_to(self.repo_path):
+                        resolved_rel = normalize_repo_path(str(full_p.relative_to(self.repo_path)))
+                        break
+                except Exception:
+                    pass
+
+            if resolved_rel:
+                target_id = file_id(resolved_rel)
+                if not any(n.id == target_id for n in store.graph.nodes):
+                    store.upsert_node(
+                        GraphNode(
+                            id=target_id,
+                            type="file",
+                            name=Path(resolved_rel).name,
+                            summary=self._file_summary(resolved_rel),
+                            tags=self._file_tags(resolved_rel),
+                            filePath=resolved_rel,
+                            metadata={"language": self._language_for(resolved_rel)},
+                        )
+                    )
+                store.upsert_edge(
+                    GraphEdge(
+                        id=edge_id(file_node_id, target_id, "imports"),
+                        source=file_node_id,
+                        target=target_id,
+                        type="imports",
+                        summary=f"Python file imports {mod}.",
+                        weight=0.7,
+                        metadata={"importPath": mod},
+                    )
+                )
+
+    def _add_tsjs_symbols(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
+        for match in TSJS_FUNCTION_RE.finditer(text):
+            name = match.group("name") or match.group("arrow_name")
+            if not name:
+                continue
+            node = GraphNode(
+                id=function_id(relative, name),
+                type="function",
+                name=name,
+                summary=f"JavaScript/TypeScript function {name} in {relative}.",
+                tags=["javascript", "typescript", "function"],
+                filePath=relative,
+                metadata={"language": self._language_for(relative)},
+            )
+            store.upsert_node(node)
+            store.upsert_edge(
+                GraphEdge(
+                    id=edge_id(file_node_id, node.id, "contains"),
+                    source=file_node_id,
+                    target=node.id,
+                    type="contains",
+                    summary="File contains function.",
+                    weight=1.0,
+                )
+            )
+
+        for match in TSJS_CLASS_RE.finditer(text):
+            name = match.group("name")
+            node = GraphNode(
+                id=f"class:{relative}:{name}",
+                type="class",
+                name=name,
+                summary=f"JavaScript/TypeScript class {name} in {relative}.",
+                tags=["javascript", "typescript", "class"],
+                filePath=relative,
+                metadata={"language": self._language_for(relative)},
+            )
+            store.upsert_node(node)
+            store.upsert_edge(
+                GraphEdge(
+                    id=edge_id(file_node_id, node.id, "contains"),
+                    source=file_node_id,
+                    target=node.id,
+                    type="contains",
+                    summary="File contains class.",
+                    weight=1.0,
+                )
+            )
+
+    def _add_tsjs_import_edges(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
+        imported_paths = set()
+        for match in TSJS_IMPORT_RE.finditer(text):
+            p = match.group("path")
+            if p:
+                imported_paths.add(p)
+
+        curr_parent = Path(relative).parent
+        for imp_path in imported_paths:
+            resolved_rel = None
+            if imp_path.startswith("@/"):
+                if relative.startswith("frontend/"):
+                    suffix_path = imp_path.removeprefix("@/")
+                    for prefix in ["frontend", "frontend/src"]:
+                        candidate_paths = [
+                            Path(prefix) / suffix_path,
+                            Path(prefix) / (suffix_path + ".ts"),
+                            Path(prefix) / (suffix_path + ".tsx"),
+                            Path(prefix) / (suffix_path + ".js"),
+                            Path(prefix) / (suffix_path + ".jsx"),
+                            Path(prefix) / suffix_path / "index.ts",
+                            Path(prefix) / suffix_path / "index.tsx",
+                        ]
+                        for cp in candidate_paths:
+                            try:
+                                full_p = (self.repo_path / cp).resolve()
+                                if full_p.is_file() and full_p.is_relative_to(self.repo_path):
+                                    resolved_rel = normalize_repo_path(str(full_p.relative_to(self.repo_path)))
+                                    break
+                            except Exception:
+                                pass
+                        if resolved_rel:
+                            break
+            elif imp_path.startswith((".", "..")):
+                suffix_path = imp_path
+                candidate_paths = [
+                    curr_parent / suffix_path,
+                    curr_parent / (suffix_path + ".ts"),
+                    curr_parent / (suffix_path + ".tsx"),
+                    curr_parent / (suffix_path + ".js"),
+                    curr_parent / (suffix_path + ".jsx"),
+                    curr_parent / suffix_path / "index.ts",
+                    curr_parent / suffix_path / "index.tsx",
+                ]
+                for cp in candidate_paths:
+                    try:
+                        full_p = (self.repo_path / cp).resolve()
+                        if full_p.is_file() and full_p.is_relative_to(self.repo_path):
+                            resolved_rel = normalize_repo_path(str(full_p.relative_to(self.repo_path)))
+                            break
+                    except Exception:
+                        pass
+
+            if resolved_rel:
+                target_id = file_id(resolved_rel)
+                if not any(n.id == target_id for n in store.graph.nodes):
+                    store.upsert_node(
+                        GraphNode(
+                            id=target_id,
+                            type="file",
+                            name=Path(resolved_rel).name,
+                            summary=self._file_summary(resolved_rel),
+                            tags=self._file_tags(resolved_rel),
+                            filePath=resolved_rel,
+                            metadata={"language": self._language_for(resolved_rel)},
+                        )
+                    )
+                store.upsert_edge(
+                    GraphEdge(
+                        id=edge_id(file_node_id, target_id, "imports"),
+                        source=file_node_id,
+                        target=target_id,
+                        type="imports",
+                        summary=f"TS/JS file imports {imp_path}.",
+                        weight=0.7,
+                        metadata={"importPath": imp_path},
+                    )
+                )
+
     def _file_summary(self, relative: str) -> str:
         if relative.endswith(".go"):
             return f"Go source file {relative}."
+        if relative.endswith((".py", ".pyw")):
+            return f"Python source file {relative}."
+        if relative.endswith((".ts", ".tsx")):
+            return f"TypeScript source file {relative}."
+        if relative.endswith((".js", ".jsx")):
+            return f"JavaScript source file {relative}."
         if relative.lower().endswith((".md", ".txt")):
             return f"Documentation file {relative}."
         return f"Repository file {relative}; detailed symbols unavailable."
+
 
     def _file_tags(self, relative: str) -> list[str]:
         tags = ["file"]
