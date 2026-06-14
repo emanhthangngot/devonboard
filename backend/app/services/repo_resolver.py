@@ -52,6 +52,12 @@ def resolve_repository_input(
         )
 
     path = Path(value).expanduser()
+    if not path.exists() and value.startswith("/app/"):
+        relative_val = value.replace("/app/", "./", 1)
+        relative_path = Path(relative_val).resolve()
+        if relative_path.exists():
+            path = relative_path
+
     return ResolvedRepository(
         path=path,
         name=path.name or "repository",
