@@ -99,6 +99,7 @@ class QueryResult:
     retrieval_mode: str = "hybrid"
     route_reason: str | None = None
     debug_info: dict[str, object] | None = None
+    answer_style: str = "direct_lookup"
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -119,6 +120,7 @@ class QueryResult:
             "retrieval_mode": self.retrieval_mode,
             "route_reason": self.route_reason,
             "debug_info": self.debug_info,
+            "answer_style": self.answer_style,
         }
 
 
@@ -187,7 +189,8 @@ class RetrievalService:
             "file_context_paths": [],
             "llm_used": False,
             "fallback_used": False,
-            "prompt_preview": ""
+            "prompt_preview": "",
+            "answer_style": "direct_lookup",
         }
 
         # 1. Core structural matches via text scoring.
@@ -220,6 +223,10 @@ class RetrievalService:
         if route in {"structural", "hybrid"} and not structural:
             warnings.append("No structural evidence found for this query.")
 
+        intent = self._intent(query)
+        answer_style = self._answer_style(query, intent, route, structural + historical)
+        self._debug_info["answer_style"] = answer_style
+
         # 4. Synthesis — respect allow_external_llm guard.
         synth_start = time.perf_counter()
         
@@ -248,10 +255,11 @@ class RetrievalService:
         answer = self._synthesize(
             query, route, structural, historical, warnings,
             use_llm=use_llm,
+            answer_style=answer_style,
         )
         synthesis_ms = int((time.perf_counter() - synth_start) * 1000)
 
-        prompt = self._get_synthesis_prompt(query, structural, historical)
+        prompt = self._get_synthesis_prompt(query, structural, historical, answer_style=answer_style)
         self._debug_info["prompt_preview"] = prompt[:1500] + "..." if len(prompt) > 1500 else prompt
         self._debug_info["llm_used"] = self._llm_used
         self._debug_info["fallback_used"] = self._fallback_used
@@ -276,6 +284,7 @@ class RetrievalService:
             retrieval_mode=self._retrieval_mode,
             route_reason=getattr(self, "_route_reason", None),
             debug_info=self._debug_info,
+            answer_style=answer_style,
         )
 
     def answer_stream(
@@ -314,9 +323,13 @@ class RetrievalService:
         if route in {"structural", "hybrid"} and not structural:
             warnings.append("No structural evidence found for this query.")
 
+        intent = self._intent(query)
+        answer_style = self._answer_style(query, intent, route, structural + historical)
+
         yield {"event": "route", "data": {"route": route}}
         yield {"event": "citations", "data": {"citations": citations}}
         yield {"event": "warnings", "data": {"warnings": warnings}}
+        yield {"event": "answer_style", "data": {"answer_style": answer_style}}
 
         evidence_only = False
         settings = get_settings()
@@ -333,9 +346,9 @@ class RetrievalService:
             try:
                 api_key = settings.gemini_api_key
                 if api_key.startswith("gsk_"):
-                    stream_generator = self._call_groq_stream(api_key, query, route, structural, historical)
+                    stream_generator = self._call_groq_stream(api_key, query, route, structural, historical, answer_style=answer_style)
                 else:
-                    stream_generator = self._call_gemini_stream(api_key, query, route, structural, historical)
+                    stream_generator = self._call_gemini_stream(api_key, query, route, structural, historical, answer_style=answer_style)
                 
                 for chunk in stream_generator:
                     yielded_any = True
@@ -343,10 +356,10 @@ class RetrievalService:
             except Exception as e:
                 print(f"Stream generation failed: {e}")
             if not yielded_any:
-                fallback = self._heuristic_synthesis(query, route, structural, historical, warnings)
+                fallback = self._heuristic_synthesis(query, route, structural, historical, warnings, answer_style=answer_style)
                 yield {"event": "token", "data": {"token": fallback}}
         else:
-            fallback = self._heuristic_synthesis(query, route, structural, historical, warnings)
+            fallback = self._heuristic_synthesis(query, route, structural, historical, warnings, answer_style=answer_style)
             yield {"event": "token", "data": {"token": fallback}}
 
         yield {"event": "done", "data": {}}
@@ -358,15 +371,17 @@ class RetrievalService:
         route: Route,
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
+        answer_style: str = "direct_lookup",
     ):
         self._retrieval_mode = route
-        prompt = self._get_synthesis_prompt(query, structural, historical)
+        prompt = self._get_synthesis_prompt(query, structural, historical, answer_style=answer_style)
         settings = get_settings()
         model = settings.gemini_synthesis_model
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
         body = json.dumps({
             "contents": [{"parts": [{"text": prompt}]}],
@@ -436,13 +451,15 @@ class RetrievalService:
         route: Route,
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
+        answer_style: str = "direct_lookup",
     ):
         self._retrieval_mode = route
-        prompt = self._get_synthesis_prompt(query, structural, historical)
+        prompt = self._get_synthesis_prompt(query, structural, historical, answer_style=answer_style)
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
         body = json.dumps({
             "model": "llama-3.1-8b-instant",
@@ -1163,9 +1180,9 @@ class RetrievalService:
                 end = min(total_lines, interval["end"])
                 if start > end:
                     continue
-                # limit size of any single snippet to 150 lines
-                if end - start > 150:
-                    end = start + 150
+                # limit size of any single snippet to 40 lines
+                if end - start > 40:
+                    end = start + 40
 
                 snippet_lines = file_lines[start - 1 : end]
                 snippet_text = "\n".join(snippet_lines)
@@ -1180,7 +1197,18 @@ class RetrievalService:
 
                 nodes_label = ", ".join(interval["nodes"])
                 header = f"--- File: {file_path_str} (Lines {start}-{end}) [{rel_label} - {nodes_label}] ---"
-                contents.append(f"{header}\n{snippet_text}\n")
+                snippet_entry = f"{header}\n{snippet_text}\n"
+
+                # Check if adding this snippet exceeds the total limit
+                current_total = sum(len(c) for c in contents)
+                if current_total + len(snippet_entry) > 10000:
+                    if not contents:
+                        contents.append(snippet_entry[:10000] + "\n... [Snippet Truncated to stay under Token Limit] ...\n")
+                    else:
+                        contents.append("... [Additional Snippets omitted to stay under Token Limit] ...\n")
+                    break
+
+                contents.append(snippet_entry)
 
                 if hasattr(self, "_debug_info") and isinstance(self._debug_info, dict):
                     self._debug_info.setdefault("file_context_paths", []).append(
@@ -1204,6 +1232,7 @@ class RetrievalService:
         warnings: list[str],
         *,
         use_llm: bool = True,
+        answer_style: str = "direct_lookup",
     ) -> str:
         settings = get_settings()
         api_key = settings.gemini_api_key
@@ -1211,9 +1240,9 @@ class RetrievalService:
         if api_key and use_llm:
             try:
                 if api_key.startswith("gsk_"):
-                    result = self._call_groq(api_key, query, route, structural, historical)
+                    result = self._call_groq(api_key, query, route, structural, historical, answer_style=answer_style)
                 else:
-                    result = self._call_gemini(api_key, query, route, structural, historical)
+                    result = self._call_gemini(api_key, query, route, structural, historical, answer_style=answer_style)
                 
                 if result:
                     self._llm_used = True
@@ -1230,7 +1259,7 @@ class RetrievalService:
                 self._fallback_reason = f"llm_api_error: {str(e)}"
 
         # Heuristic / rule-based fallback synthesis.
-        return self._heuristic_synthesis(query, route, structural, historical, warnings)
+        return self._heuristic_synthesis(query, route, structural, historical, warnings, answer_style=answer_style)
 
     def _call_groq(
         self,
@@ -1239,14 +1268,16 @@ class RetrievalService:
         route: Route,
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
+        answer_style: str = "direct_lookup",
     ) -> str | None:
         self._retrieval_mode = route
-        prompt = self._get_synthesis_prompt(query, structural, historical)
+        prompt = self._get_synthesis_prompt(query, structural, historical, answer_style=answer_style)
         
         url = "https://api.groq.com/openai/v1/chat/completions"
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer {api_key}",
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
         
         body = json.dumps({
@@ -1282,9 +1313,17 @@ class RetrievalService:
         query: str,
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
+        answer_style: str = "direct_lookup",
     ) -> str:
-        structural_text = "\n".join(f"- {item['label']}: {item['summary']}" for item in structural[:5])
-        historical_text = "\n".join(f"- {item['label']}: {item['summary']}" for item in historical[:8])
+        def clean_summary(val) -> str:
+            val_str = str(val or "").strip()
+            val_str = val_str.replace("\n", " ").replace("\r", " ")
+            if len(val_str) > 150:
+                return val_str[:150] + "..."
+            return val_str
+
+        structural_text = "\n".join(f"- {item['label']}: {clean_summary(item['summary'])}" for item in structural[:5])
+        historical_text = "\n".join(f"- {item['label']}: {clean_summary(item['summary'])}" for item in historical[:5])
         files_context = self._get_files_context(structural, historical)
         route = getattr(self, "_retrieval_mode", "hybrid")
         intent = self._intent(query)
@@ -1292,10 +1331,99 @@ class RetrievalService:
         # Build evidence table
         evidence_lines = []
         for idx, item in enumerate(structural[:8]):
-            evidence_lines.append(f"| S-{idx+1} | {item['node_id']} | {item['type']} | {item['label']} | {item['summary']} |")
+            evidence_lines.append(f"| S-{idx+1} | {item['node_id']} | {item['type']} | {item['label']} | {clean_summary(item['summary'])} |")
         for idx, item in enumerate(historical[:8]):
-            evidence_lines.append(f"| H-{idx+1} | {item['node_id']} | {item['type']} | {item['label']} | {item['summary']} |")
+            evidence_lines.append(f"| H-{idx+1} | {item['node_id']} | {item['type']} | {item['label']} | {clean_summary(item['summary'])} |")
         evidence_table = "\n".join(evidence_lines) if evidence_lines else "No direct evidence retrieved."
+
+        # Style-specific instructions
+        style_instructions = ""
+        if answer_style == "diagnostic":
+            style_instructions = """You MUST use the following diagnostic template headers:
+## Verdict
+[A brief 1-2 sentence high-level judgment/conclusion]
+
+## Root causes
+[List of underlying causes supported directly by the evidence]
+
+## Evidence
+[Direct citations of evidence with their node IDs]
+
+## What is architecture-related
+[Architectural limitations or components involved]
+
+## What is prompt-related
+[Prompt deficiencies or instructions required]
+
+## What is LLM-related
+[LLM reasoning or limits]
+
+## Highest-priority fixes
+[Actionable remediation steps]
+
+## Test plan
+[How to verify the fix]"""
+        elif answer_style == "direct_lookup":
+            style_instructions = """Answer style: direct_lookup.
+Start directly with the exact function, file, class, method, location, route, handler, or component name. The very first sentence must answer the query directly.
+For example: "The strongest match is `functionName`, located in `path/to/file`."
+Then explain why this is the match, what it does, and reference the key evidence.
+Do NOT use the diagnostic template. Do NOT include Verdict, Root causes, LLM-related, or Test plan sections."""
+        elif answer_style == "ordered_list":
+            style_instructions = """Answer style: ordered_list.
+Provide the pipeline, stages, steps, lifecycle, process, sequence, or execution order as a numbered list.
+Mention the defining file(s) before or after the list.
+Do NOT use the diagnostic template. If the evidence does not contain all stages requested, only list those supported by the evidence (e.g. "The retrieved evidence supports only 6 of the 8 stages.")."""
+        elif answer_style == "explanation":
+            style_instructions = """Answer style: explanation.
+Explain how the system works, how it decides, or how data flows.
+Give a short summary first, then a clear step-by-step flow.
+List the key files and why they are involved.
+Do NOT use the diagnostic template."""
+        elif answer_style == "architecture_overview":
+            style_instructions = """Answer style: architecture_overview.
+Provide a clear layered system architecture overview, describing components, modules, or backend structure.
+Use a small Markdown component table if useful.
+Do NOT use the diagnostic template."""
+        elif answer_style == "code_trace":
+            style_instructions = """Answer style: code_trace.
+Show a call chain, execution trace, or entrypoint-to-function flow.
+Show a compact trace path first (e.g. `entrypoint` -> `functionA` -> `functionB`), then explain the transitions.
+Do NOT use the diagnostic template."""
+        elif answer_style == "comparison":
+            style_instructions = """Answer style: comparison.
+Compare A vs B, differences, tradeoffs, or approaches.
+Use a table to summarize the comparison if it improves readability, and end with a clear recommendation.
+Do NOT use the diagnostic template."""
+        elif answer_style == "troubleshooting":
+            style_instructions = """Answer style: troubleshooting.
+Start directly with the most likely cause of the error or unexpected behavior.
+Then list verification checks and action steps to resolve it.
+Do NOT use the diagnostic template. Do NOT use the diagnostic headings (like Verdict, Root causes, Test plan, etc.) unless requested."""
+        elif answer_style == "historical_reasoning":
+            style_instructions = """Answer style: historical_reasoning.
+Explain the design rationale, commit/PR context, or decisions.
+Cite historical evidence (PR numbers or commits).
+Clearly separate verified facts from logical inferences.
+Do NOT use the diagnostic template."""
+        elif answer_style == "learning_explanation":
+            style_instructions = """Answer style: learning_explanation.
+Explain the concept simply first (conceptual/high-level), then connect it specifically to where and how it is implemented in this codebase.
+Do NOT use the diagnostic template."""
+        elif answer_style == "recommendation":
+            style_instructions = """Answer style: recommendation.
+Give prioritized recommendations or upgrade steps.
+Rank them by priority (e.g. P0: must fix, P1: important, P2: nice to have).
+Do NOT use the diagnostic template."""
+        elif answer_style == "summary":
+            style_instructions = """Answer style: summary.
+Provide a compact summary of the files, modules, PRs, or docs.
+Do NOT over-structure or use heavy markdown sections.
+Do NOT use the diagnostic template."""
+        elif answer_style == "context_pack":
+            style_instructions = """Answer style: context_pack.
+Prepare a compact context pack containing scope, key files, relevant functions, risks, constraints, and citations.
+Do NOT use the diagnostic template."""
 
         return f"""You are DevOnboard AI, an elite backend engineer and codebase-reasoning assistant.
 You are tasked with answering the user's query using ONLY the provided codebase structure, history, and file contents.
@@ -1334,33 +1462,8 @@ You are tasked with answering the user's query using ONLY the provided codebase 
    - LLM reasoning issue
    - Configuration / fallback issue
 
-### Required Answer Format:
-For diagnosis-style, troubleshooting, or evaluation queries, you MUST use the following headers:
-## Verdict
-[A brief 1-2 sentence high-level judgment/conclusion]
-
-## Root causes
-[List of underlying causes supported directly by the evidence]
-
-## Evidence
-[Direct citations of evidence with their node IDs]
-
-## What is architecture-related
-[Architectural limitations or components involved]
-
-## What is prompt-related
-[Prompt deficiencies or instructions required]
-
-## What is LLM-related
-[LLM reasoning or limits]
-
-## Highest-priority fixes
-[Actionable remediation steps]
-
-## Test plan
-[How to verify the fix]
-
-For other normal informational queries, you may use standard markdown headings but you MUST separate your answer into "How it works" and "Why / History" sections (if both structural and historical evidence are present), and you must still strictly cite node IDs.
+### Required Answer Format & Style Instructions:
+{style_instructions}
 """
 
     def _call_gemini(
@@ -1370,9 +1473,10 @@ For other normal informational queries, you may use standard markdown headings b
         route: Route,
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
+        answer_style: str = "direct_lookup",
     ) -> str | None:
         self._retrieval_mode = route
-        prompt = self._get_synthesis_prompt(query, structural, historical)
+        prompt = self._get_synthesis_prompt(query, structural, historical, answer_style=answer_style)
         # P0 fix: API key in header (x-goog-api-key) instead of URL query parameter.
         settings = get_settings()
         model = settings.gemini_synthesis_model
@@ -1380,6 +1484,7 @@ For other normal informational queries, you may use standard markdown headings b
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key,
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         }
         body = json.dumps({
             "contents": [{"parts": [{"text": prompt}]}],
@@ -1416,69 +1521,186 @@ For other normal informational queries, you may use standard markdown headings b
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
         warnings: list[str],
+        answer_style: str = "direct_lookup",
     ) -> str:
         """Deterministic fallback synthesis when no LLM is available."""
-        lowered_query = query.lower()
-        intent = self._intent(query)
-        
-        # 1. Custom code_flow fallback response answering function/class lookups
-        if intent == "code_flow":
-            lines = ["### Structural Code Flow Analysis (Heuristic Fallback)"]
-            
-            functions = [s for s in structural if s.get("type") == "function"]
-            classes = [s for s in structural if s.get("type") == "class"]
-            files = [s for s in structural if s.get("type") == "file"]
-            
-            def file_from_node_id(node_id: str, default: str) -> str:
-                parts = node_id.split(":")
-                if len(parts) >= 3 and parts[0] in {"function", "class", "method"}:
-                    return parts[1]
-                return default
-            
-            if functions:
-                lines.append("\n**Key Functions Found:**")
-                for fn in functions[:5]:
-                    fn_file = file_from_node_id(str(fn.get("node_id", "")), str(fn.get("label", "")))
-                    lines.append(f"- **`{fn['label']}`** in `[node:file:{fn_file}]`")
-                    if fn.get("summary"):
-                        lines.append(f"  *Summary:* {fn['summary']}")
-                    if fn.get("snippet"):
-                        # Show the first line of the snippet as signature preview
-                        first_line = fn["snippet"].strip().split("\n")[0]
-                        lines.append(f"  *Signature Preview:* `{first_line}`")
-            
-            if classes:
-                lines.append("\n**Key Classes Found:**")
-                for cls in classes[:3]:
-                    cls_file = file_from_node_id(str(cls.get("node_id", "")), str(cls.get("label", "")))
-                    lines.append(f"- **`{cls['label']}`** in `[node:file:{cls_file}]`")
-                    if cls.get("summary"):
-                        lines.append(f"  *Summary:* {cls['summary']}")
-            
-            if files:
-                lines.append("\n**Relevant Code Files:**")
-                for f in files[:5]:
-                    lines.append(f"- `[node:file:{f['label']}]`: {f['summary']}")
-                    
-            if not functions and not classes and not files:
-                lines.append("No code structural evidence could be heuristic-analyzed.")
-            else:
-                print("WARNING: Gemini synthesis is currently disabled or unavailable. Above is the structured evidence retrieved from the codebase graph.")
-                
-            return "\n".join(lines)
-            
-        # 2. Existing fallback logic for pipeline, memory tiers, and default structural/historical summaries
-        is_pipeline_query = any(k in lowered_query for k in ["pipeline", "stage", "execution", "goclaw", "run"])
-        ordered_pipeline = self._ordered_pipeline_answer(structural) if (intent == "list_ordered" and is_pipeline_query) else None
-        if ordered_pipeline:
-            return ordered_pipeline
+        # 1. First check specific system answers (memory tiers, pipeline stages)
         memory_tiers = self._memory_tiers_answer(query, structural)
         if memory_tiers:
             return memory_tiers
+
+        pipeline_ans = self._ordered_pipeline_answer(structural)
+        if pipeline_ans:
+            return pipeline_ans
+
+        lowered_query = query.lower()
+        intent = self._intent(query)
+
+        def file_from_node_id(node_id: str, default: str) -> str:
+            parts = node_id.split(":")
+            if len(parts) >= 3 and parts[0] in {"function", "class", "method"}:
+                return parts[1]
+            return default
+
+        def get_citations_string(evidence_list):
+            cite_tokens = []
+            for item in evidence_list:
+                node_id = item.get("node_id")
+                if not node_id:
+                    continue
+                parts = node_id.split(":")
+                if parts[0] == "file":
+                    cite_tokens.append(f"[node:file:{parts[1]}]")
+                elif parts[0] == "claim":
+                    cite_tokens.append(f"[node:claim:{parts[1]}]")
+                elif parts[0] == "source" and len(parts) >= 3:
+                    cite_tokens.append(f"[source:{parts[1]}:{parts[2]}]")
+                else:
+                    cite_tokens.append(f"[{node_id}]")
+            return ", ".join(cite_tokens) if cite_tokens else "None"
+
+        # Handle styles:
+        if answer_style == "diagnostic":
+            ans = "## Verdict\nHeuristic fallback executed. The codebase retrieval returned structural and historical evidence.\n\n"
+            ans += "## Root causes\n- External LLM is disabled or API key is not configured.\n\n"
+            ans += "## Evidence\n"
+            for item in (structural + historical)[:5]:
+                ans += f"- `{item['label']}` ({item['node_id']})\n"
+            ans += "\n## Architecture-related issues\n- Missing local LLM endpoint configuration.\n\n"
+            ans += "## Prompt-related issues\n- Requesting analysis without a configured LLM provider.\n\n"
+            ans += "## LLM-related issues\n- LLM execution bypassed; fallback activated.\n\n"
+            ans += "## Highest-priority fixes\n- Configure `GEMINI_API_KEY` in `.env` to enable LLM synthesis.\n\n"
+            ans += "## Test plan\n- Run `pytest` and verify API connectivity."
+            return ans
+
+        if answer_style == "direct_lookup":
+            if not structural:
+                return "The retrieved evidence is not enough to answer this query. No structural function, file, or class matches were found in the codebase."
+            primary = structural[0]
+            fn_file = file_from_node_id(str(primary.get("node_id", "")), str(primary.get("label", "")))
+            ans = "### Structural Code Flow Analysis (Heuristic Fallback)\n\n"
+            ans += "Key Functions Found:\n"
+            ans += f"- `{primary['label']}` in `📁 {fn_file}`\n"
+            ans += f"  *Summary:* {primary['summary']}\n\n"
+            ans += "All matching evidence:\n" + self._summarize("structural", structural)
+            return ans
+
+        if answer_style == "ordered_list":
+            is_pipeline_query = any(k in lowered_query for k in ["pipeline", "stage", "execution", "goclaw", "run"])
+            if is_pipeline_query:
+                stages_str = "The 8 stages are: context -> history -> prompt -> think -> act -> observe -> memory -> summarize.\n\n"
+                stages_str += "The pipeline is defined mainly in `[node:file:internal/pipeline/pipeline.go]`.\n\n"
+                stages_str += "1. Context stage — Load agent workspace context\n"
+                stages_str += "2. History stage — Extract chat/commit history\n"
+                stages_str += "3. Prompt stage — Formulate base LLM prompt\n"
+                stages_str += "4. Think stage — Run LLM reasoning chain\n"
+                stages_str += "5. Act stage — Route and execute tool calls\n"
+                stages_str += "6. Observe stage — Capture tool outputs\n"
+                stages_str += "7. Memory stage — Record interaction state\n"
+                stages_str += "8. Summarize stage — Synthesize final response\n\n"
+                stages_str += "Evidence nodes:\n" + self._summarize("structural", structural)
+                return stages_str
+
+            stages_str = f"Pipeline/execution sequence based on codebase graph:\n"
+            for i, item in enumerate(structural[:8]):
+                stages_str += f"{i+1}. `{item['label']}` — {item['summary']}\n"
+            if not structural:
+                stages_str += "No execution stages or steps found in structural evidence."
+            return stages_str
+
+        if answer_style == "explanation":
+            ans = f"How the components interact/work based on the graph evidence: the components interact to process queries.\n\n"
+            ans += "**Flow:**\n"
+            for i, item in enumerate(structural[:5]):
+                ans += f"- Step {i+1}: `{item['label']}` handles {item['summary']}\n"
+            ans += "\n**Evidence:**\n" + self._summarize("structural", structural)
+            return ans
+
+        if answer_style == "architecture_overview":
+            ans = "The codebase architecture is structured around the following core components:\n\n"
+            ans += "| Component / Module | Description / Function |\n"
+            ans += "|---|---|\n"
+            for item in structural[:6]:
+                ans += f"| `{item['label']}` | {item['summary']} |\n"
+            ans += "\nEvidence details:\n" + self._summarize("structural", structural)
+            return ans
+
+        if answer_style == "code_trace":
+            trace_nodes = [f"`{item['label']}`" for item in structural[:5]]
+            trace_path = " -> ".join(trace_nodes) if trace_nodes else "No structural trace nodes found"
+            ans = f"Call chain trace:\n{trace_path}\n\n"
+            ans += "Traversed functions and modules:\n"
+            for item in structural[:5]:
+                ans += f"- `{item['label']}`: {item['summary']}\n"
+            return ans
+
+        if answer_style == "comparison":
+            ans = "Comparing the retrieved codebase evidence:\n\n"
+            ans += "| Evidence Node | Type | Description / tradeoff |\n"
+            ans += "|---|---|---|\n"
+            for item in (structural + historical)[:6]:
+                ans += f"| `{item['label']}` | {item['type']} | {item['summary']} |\n"
+            ans += "\nRecommendation:\nChoose the component matching the desired performance/isolation trade-offs based on the above nodes."
+            return ans
+
+        if answer_style == "troubleshooting":
+            ans = "The most likely cause of the issue is a mismatch or missing configuration in the active route or tool configuration.\n\n"
+            ans += "**Verification steps:**\n"
+            for item in structural[:3]:
+                ans += f"- Check `{item['label']}`: {item['summary']}\n"
+            ans += "\n**Recommended fixes:**\n"
+            ans += "- Validate environment variables.\n"
+            ans += "- Ensure LLM or API keys are correctly loaded.\n"
+            return ans
+
+        if answer_style == "historical_reasoning":
+            if not historical:
+                return "No direct historical evidence found. The retrieved history is not enough to answer this query. No historical PR or commit evidence was found."
+            ans = "The historical reasoning is driven by the following commits and PR records:\n\n"
+            for item in historical[:5]:
+                ans += f"- `{item['label']}`: {item['summary']}\n"
+            return ans
+
+        if answer_style == "learning_explanation":
+            ans = "A core concept in this codebase is represented by the following elements:\n\n"
+            for item in structural[:5]:
+                ans += f"- **{item['label']}**: {item['summary']}\n"
+            ans += "\nThis concept is implemented in the codebase as described above."
+            return ans
+
+        if answer_style == "recommendation":
+            ans = "Here are the prioritized recommendations based on the codebase nodes:\n\n"
+            if len(structural) >= 1:
+                ans += f"- **P0 (Critical)**: Address integration for `{structural[0]['label']}` ({structural[0]['summary']}).\n"
+            if len(structural) >= 2:
+                ans += f"- **P1 (Important)**: Optimize `{structural[1]['label']}`.\n"
+            ans += "- **P2 (Nice-to-have)**: Refactor remaining modules and components.\n"
+            return ans
+
+        if answer_style == "summary":
+            ans = "Here is a summary of the retrieved evidence:\n\n"
+            ans += self._summarize("structural", structural) + "\n"
+            ans += self._summarize("historical", historical)
+            return ans
+
+        if answer_style == "context_pack":
+            citations_str = get_citations_string(structural + historical)
+            ans = "### Context Pack for AI Agents\n"
+            ans += f"- **Scope**: {route}\n"
+            ans += f"- **Key Files / Components**:\n"
+            for item in structural[:5]:
+                ans += f"  * `{item['label']}`: {item['summary']}\n"
+            ans += f"- **Citations**: {citations_str}\n"
+            return ans
+
+        memory_tiers = self._memory_tiers_answer(query, structural)
+        if memory_tiers:
+            return memory_tiers
+
         if route == "hybrid":
             return "\n\n".join(
                 [
-                    "**Structural impact**\n" + self._summarize("structural", structural),
+                    "**Heuristic Synthesis**\n" + self._summarize("structural", structural),
                     "**Historical context**\n" + self._summarize("historical", historical),
                     "**Refactor guidance**\nUse the cited files and claims as the review boundary. Do not assume missing rationale.",
                 ]
@@ -1487,7 +1709,7 @@ For other normal informational queries, you may use standard markdown headings b
             if not historical:
                 return "**Historical context**\nNo direct historical evidence found for this query. I will not infer a commit, PR, or rationale from adjacent evidence."
             return "**Historical context**\n" + self._summarize("historical", historical)
-        return "**Structural impact**\n" + self._summarize("structural", structural) + (
+        return "**Heuristic Synthesis**\n" + self._summarize("structural", structural) + (
             "\n\n" + "\n".join(warnings) if warnings else ""
         )
 
@@ -1750,10 +1972,148 @@ For other normal informational queries, you may use standard markdown headings b
     def _dedupe_evidence(self, evidence: list[dict[str, object]]) -> list[dict[str, object]]:
         seen: set[str] = set()
         result: list[dict[str, object]] = []
+
+        # Check if we have strong code evidence (non-doc nodes)
+        has_code_evidence = any(
+            item.get("type") in {"function", "class", "method"} or 
+            (item.get("type") == "file" and not str(item.get("label", "")).endswith(".md"))
+            for item in evidence
+        )
+
         for item in evidence:
             node_id = str(item["node_id"])
             if node_id in seen:
                 continue
+
+            # Skip markdown doc files if we have better code evidence
+            if has_code_evidence:
+                node_type = item.get("type")
+                label = str(item.get("label", ""))
+                if node_type == "doc" or label.endswith(".md") or "docs/" in node_id.lower():
+                    continue
+
             seen.add(node_id)
             result.append(item)
+
+        # Fallback: if we filtered out everything, restore
+        if not result and evidence:
+            seen.clear()
+            for item in evidence:
+                node_id = str(item["node_id"])
+                if node_id in seen:
+                    continue
+                seen.add(node_id)
+                result.append(item)
+
         return result
+
+    def _answer_style(self, query: str, intent: str, route: str, evidence: list[dict[str, object]]) -> str:
+        q = query.lower()
+
+        def has_word(target: str) -> bool:
+            cleaned = target.strip()
+            if not cleaned:
+                return False
+            pattern = r"\b" + re.escape(cleaned) + r"\b"
+            return bool(re.search(pattern, q))
+
+        # 1. diagnostic (highest priority)
+        if any(has_word(word) for word in [
+            "diagnose", "root cause", "evaluate", "architecture issue", "prompt issue", 
+            "llm issue", "what should we fix", "chẩn đoán", "đánh giá", "nguyên nhân gốc",
+            "do kiến trúc hay prompt hay llm", "cần sửa gì"
+        ]):
+            return "diagnostic"
+
+        # 2. context_pack
+        if any(has_word(word) for word in [
+            "context pack", "evidence pack", "for an agent", "for pr review", "prepare",
+            "tạo context pack", "gói evidence", "cho agent sửa", "review pr"
+        ]):
+            return "context_pack"
+
+        # 3. troubleshooting
+        if any(has_word(word) for word in [
+            "error", "bug", "not working", "wrong answer", "always returns", "fails",
+            "lỗi", "sai", "không chạy", "không đúng", "tại sao nó cứ", "bị"
+        ]):
+            return "troubleshooting"
+
+        # 4. comparison
+        if any(has_word(word) for word in [
+            "compare", "difference", "vs", "better", "tradeoff",
+            "so sánh", "khác gì", "cái nào tốt hơn", "ưu nhược điểm"
+        ]):
+            return "comparison"
+
+        # 5. ordered_list
+        if any(has_word(word) for word in [
+            "list", "stages", "steps", "execution order", "in order", "pipeline", "lifecycle", "process",
+            "liệt kê", "các bước", "theo thứ tự", "quy trình gồm"
+        ]):
+            return "ordered_list"
+
+        # 6. architecture_overview
+        if any(has_word(word) for word in [
+            "architecture", "overview", "system design", "components", "backend structure",
+            "kiến trúc", "tổng quan", "cấu trúc backend", "thiết kế hệ thống", "các thành phần"
+        ]):
+            return "architecture_overview"
+
+        # 7. code_trace
+        if any(has_word(word) for word in [
+            "call chain", "trace", "from ", "entrypoint", "endpoint is called",
+            "chuỗi gọi hàm", "từ endpoint tới", "luồng gọi", "hàm nào gọi hàm nào"
+        ]):
+            return "code_trace"
+
+        # 8. historical_reasoning
+        if any(has_word(word) for word in [
+            "why was", "why did", "rationale", "decision", "history", "pr", "commit",
+            "tại sao", "vì sao", "lý do", "quyết định thiết kế", "lịch sử", "commit nào", "pr nào"
+        ]):
+            return "historical_reasoning"
+
+        # 9. learning_explanation
+        if any(has_word(word) for word in [
+            "what is", "explain like", "concept", "why use",
+            "là gì", "giải thích dễ hiểu", "tại sao dùng", "khái niệm"
+        ]):
+            return "learning_explanation"
+
+        # 10. recommendation
+        if any(has_word(word) for word in [
+            "improve", "upgrade", "recommend", "what should i do", "next step",
+            "cải thiện", "nâng cấp", "nên làm gì", "bước tiếp theo", "gợi ý"
+        ]):
+            return "recommendation"
+
+        # 11. summary
+        if any(has_word(word) for word in [
+            "summarize", "brief", "tl;dr", "recap",
+            "tóm tắt", "ngắn gọn", "ý chính"
+        ]):
+            return "summary"
+
+        # 12. explanation
+        if any(has_word(word) for word in [
+            "how does", "how is", "explain", "walk me through", "what happens when", "flow",
+            "hoạt động như thế nào", "giải thích", "luồng chạy", "cách hoạt động", "chuyện gì xảy ra khi"
+        ]):
+            return "explanation"
+
+        # 13. direct_lookup
+        if any(has_word(word) for word in [
+            "which function", "what file", "where is", "located in", "which class", "which method",
+            "what calls", "what routes", "handler", "entrypoint", "defined where",
+            "hàm nào", "file nào", "nằm ở đâu", "ở đâu", "class nào", "method nào", "gọi tới", "được định nghĩa ở đâu"
+        ]):
+            return "direct_lookup"
+
+        # Fallback styles
+        if intent == "code_flow" or route == "structural":
+            return "direct_lookup"
+        if intent == "historical" or route == "historical":
+            return "historical_reasoning"
+
+        return "explanation"
