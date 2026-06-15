@@ -15,18 +15,34 @@ class QueryRequest(BaseModel):
     query: str = Field(min_length=1)
     mode: str = "auto"
     node_ids: list[str] = Field(default_factory=list)
-    allow_external_llm_for_private_repo: bool = False
+    allow_external_llm_for_private_repo: bool = True
+    debug: bool = False
 
 
 @router.post("/query")
 def post_query(request: QueryRequest) -> dict[str, object]:
     graph = _load_graph()
-    return RetrievalService(graph).answer(
+    res = RetrievalService(graph).answer(
         query=request.query,
         mode=request.mode,
         node_ids=request.node_ids,
         allow_external_llm=request.allow_external_llm_for_private_repo,
-    ).as_dict()
+    )
+    if request.debug:
+        return res.as_dict().get("debug_info") or {}
+    return res.as_dict()
+
+
+@router.post("/query/debug")
+def post_query_debug(request: QueryRequest) -> dict[str, object]:
+    graph = _load_graph()
+    res = RetrievalService(graph).answer(
+        query=request.query,
+        mode=request.mode,
+        node_ids=request.node_ids,
+        allow_external_llm=request.allow_external_llm_for_private_repo,
+    )
+    return res.as_dict().get("debug_info") or {}
 
 
 @router.post("/query/stream")

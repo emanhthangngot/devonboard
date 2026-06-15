@@ -50,6 +50,143 @@ TSJS_CLASS_RE = re.compile(
     r"^[ \t]*(?:export\s+(?:default\s+)?)?class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*",
     re.MULTILINE
 )
+import ast
+
+class PythonVisitor(ast.NodeVisitor):
+    def __init__(self, relative_path: str, text: str):
+        self.relative_path = relative_path
+        self.text = text
+        self.classes = []
+        self.functions = []
+        self.imports = []
+        self.calls = []
+        self.routes = []
+        self.current_class = None
+        self.current_function = None
+
+    def visit_Import(self, node):
+        for name in node.names:
+            self.imports.append({
+                "module": name.name,
+                "lineno": node.lineno
+            })
+        self.generic_visit(node)
+
+    def visit_ImportFrom(self, node):
+        module = node.module or ""
+        if node.level and node.level > 0:
+            module = "." * node.level + module
+        self.imports.append({
+            "module": module,
+            "lineno": node.lineno
+        })
+        self.generic_visit(node)
+
+    def visit_ClassDef(self, node):
+        class_name = node.name
+        docstring = ast.get_docstring(node)
+        start_line = node.lineno
+        end_line = start_line
+        for child in ast.walk(node):
+            if hasattr(child, "lineno"):
+                end_line = max(end_line, child.lineno)
+        
+        class_info = {
+            "name": class_name,
+            "docstring": docstring,
+            "start_line": start_line,
+            "end_line": end_line,
+        }
+        self.classes.append(class_info)
+        
+        prev_class = self.current_class
+        self.current_class = class_name
+        self.generic_visit(node)
+        self.current_class = prev_class
+
+    def visit_FunctionDef(self, node):
+        self._visit_any_function(node)
+
+    def visit_AsyncFunctionDef(self, node):
+        self._visit_any_function(node)
+
+    def _visit_any_function(self, node):
+        func_name = node.name
+        qualified_name = f"{self.current_class}.{func_name}" if self.current_class else func_name
+        docstring = ast.get_docstring(node)
+        start_line = node.lineno
+        end_line = start_line
+        for child in ast.walk(node):
+            if hasattr(child, "lineno"):
+                end_line = max(end_line, child.lineno)
+                
+        args = [arg.arg for arg in node.args.args]
+        
+        for dec in node.decorator_list:
+            dec_name = ""
+            if isinstance(dec, ast.Call):
+                func = dec.func
+                if isinstance(func, ast.Attribute):
+                    if isinstance(func.value, ast.Name):
+                        dec_name = f"{func.value.id}.{func.attr}"
+                    else:
+                        dec_name = func.attr
+                elif isinstance(func, ast.Name):
+                    dec_name = func.id
+                
+                if dec_name in ["router.get", "router.post", "router.put", "router.delete", "router.patch", "router.route",
+                                 "app.get", "app.post", "app.put", "app.delete", "app.patch", "app.route"]:
+                    route_path = ""
+                    if dec.args and isinstance(dec.args[0], ast.Constant):
+                        route_path = str(dec.args[0].value)
+                    elif dec.args and isinstance(dec.args[0], ast.Str):
+                        route_path = str(dec.args[0].s)
+                    
+                    self.routes.append({
+                        "path": route_path,
+                        "method": dec_name.split(".")[-1],
+                        "handler": qualified_name,
+                        "lineno": dec.lineno
+                    })
+
+        func_info = {
+            "name": func_name,
+            "qualified_name": qualified_name,
+            "is_method": self.current_class is not None,
+            "class_name": self.current_class,
+            "docstring": docstring,
+            "start_line": start_line,
+            "end_line": end_line,
+            "signature": f"def {func_name}({', '.join(args)})"
+        }
+        self.functions.append(func_info)
+
+        prev_func = self.current_function
+        self.current_function = qualified_name
+        self.generic_visit(node)
+        self.current_function = prev_func
+
+    def visit_Call(self, node):
+        if self.current_function:
+            callee = ""
+            func = node.func
+            if isinstance(func, ast.Name):
+                callee = func.id
+            elif isinstance(func, ast.Attribute):
+                if isinstance(func.value, ast.Name):
+                    callee = f"{func.value.id}.{func.attr}"
+                else:
+                    callee = func.attr
+            if callee:
+                self.calls.append({
+                    "caller": self.current_function,
+                    "callee": callee,
+                    "lineno": node.lineno
+                })
+        self.generic_visit(node)
+
+
+
 TSJS_IMPORT_RE = re.compile(r"^[ \t]*import\s+(?:.*\s+from\s+)?['\"](?P<path>[^'\"]+)['\"]", re.MULTILINE)
 DOCUMENT_EXTENSIONS = (".md", ".mdx", ".txt", ".rst")
 DOCUMENT_SNIPPET_LIMIT = 2400
@@ -90,6 +227,7 @@ class StructureScanner:
         )
 
         go_files: list[tuple[Path, str, str]] = []
+        python_files: list[tuple[Path, str, str]] = []
         for path in sorted(self.repo_path.rglob("*")):
             if not path.is_file():
                 continue
@@ -97,11 +235,15 @@ class StructureScanner:
             if self._is_excluded(relative):
                 continue
             text = self._add_file(store, path, relative)
-            if text is not None and relative.endswith(".go"):
-                go_files.append((path, relative, text))
+            if text is not None:
+                if relative.endswith(".go"):
+                    go_files.append((path, relative, text))
+                elif relative.endswith((".py", ".pyw")):
+                    python_files.append((path, relative, text))
 
         if self.call_graph_mode != "off":
             self._add_go_call_graph(store, go_files)
+            self._add_python_call_graph(store, python_files)
 
         return store.graph
 
@@ -144,6 +286,7 @@ class StructureScanner:
             text = text_for_metadata or path.read_text(encoding="utf-8", errors="ignore")
             self._add_python_symbols(store, relative, text, file_node.id)
             self._add_python_import_edges(store, relative, text, file_node.id)
+            return text
         elif relative.endswith((".ts", ".tsx", ".js", ".jsx")):
             text = text_for_metadata or path.read_text(encoding="utf-8", errors="ignore")
             self._add_tsjs_symbols(store, relative, text, file_node.id)
@@ -349,43 +492,29 @@ class StructureScanner:
             )
 
     def _add_python_symbols(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
-        for match in PYTHON_FUNCTION_RE.finditer(text):
-            name = match.group("name")
-            line_no = self._line_of(text, match.start())
-            node = GraphNode(
-                id=function_id(relative, name),
-                type="function",
-                name=name,
-                summary=f"Python function {name} in {relative}.",
-                tags=["python", "function"],
-                filePath=relative,
-                line_range=(line_no, line_no),
-                metadata={"language": "python"},
-            )
-            store.upsert_node(node)
-            store.upsert_edge(
-                GraphEdge(
-                    id=edge_id(file_node_id, node.id, "contains"),
-                    source=file_node_id,
-                    target=node.id,
-                    type="contains",
-                    summary="File contains function.",
-                    weight=1.0,
-                )
-            )
+        try:
+            tree = ast.parse(text)
+        except Exception:
+            return  # Skip if invalid syntax
 
-        for match in PYTHON_CLASS_RE.finditer(text):
-            name = match.group("name")
-            line_no = self._line_of(text, match.start())
+        visitor = PythonVisitor(relative, text)
+        visitor.visit(tree)
+
+        # 1. Upsert Class nodes and contain edges
+        for cls in visitor.classes:
+            class_name = cls["name"]
             node = GraphNode(
-                id=f"class:{relative}:{name}",
+                id=f"class:{relative}:{class_name}",
                 type="class",
-                name=name,
-                summary=f"Python class {name} in {relative}.",
+                name=class_name,
+                summary=cls["docstring"] or f"Python class {class_name} in {relative}.",
                 tags=["python", "class"],
                 filePath=relative,
-                line_range=(line_no, line_no),
-                metadata={"language": "python"},
+                line_range=(cls["start_line"], cls["end_line"]),
+                metadata={
+                    "language": "python",
+                    "docstring": cls["docstring"],
+                },
             )
             store.upsert_node(node)
             store.upsert_edge(
@@ -399,17 +528,84 @@ class StructureScanner:
                 )
             )
 
+        # 2. Upsert Function / Method nodes and contain edges
+        for func in visitor.functions:
+            func_name = func["name"]
+            qualified_name = func["qualified_name"]
+            node = GraphNode(
+                id=function_id(relative, qualified_name),
+                type="function",
+                name=func_name,
+                summary=func["docstring"] or f"Python function {qualified_name} in {relative}.",
+                tags=["python", "method" if func["is_method"] else "function"],
+                filePath=relative,
+                line_range=(func["start_line"], func["end_line"]),
+                metadata={
+                    "language": "python",
+                    "qualified_name": qualified_name,
+                    "signature": func["signature"],
+                    "docstring": func["docstring"],
+                },
+            )
+            store.upsert_node(node)
+
+            # Link parent
+            if func["is_method"]:
+                parent_id = f"class:{relative}:{func['class_name']}"
+                summary = "Class contains method."
+            else:
+                parent_id = file_node_id
+                summary = "File contains function."
+
+            store.upsert_edge(
+                GraphEdge(
+                    id=edge_id(parent_id, node.id, "contains"),
+                    source=parent_id,
+                    target=node.id,
+                    type="contains",
+                    summary=summary,
+                    weight=1.0,
+                )
+            )
+
+        # 3. Upsert Endpoint nodes and routes edges
+        for route in visitor.routes:
+            endpoint_id = f"endpoint:{route['method']}:{route['path']}"
+            handler_id = function_id(relative, route['handler'])
+            
+            node = GraphNode(
+                id=endpoint_id,
+                type="endpoint",
+                name=f"{route['method'].upper()} {route['path']}",
+                summary=f"FastAPI endpoint {route['method'].upper()} {route['path']}.",
+                tags=["fastapi", "endpoint", route["method"].lower()],
+                filePath=relative,
+                line_range=(route["lineno"], route["lineno"]),
+                metadata={"language": "python", "method": route["method"], "path": route["path"]},
+            )
+            store.upsert_node(node)
+            
+            store.upsert_edge(
+                GraphEdge(
+                    id=edge_id(endpoint_id, handler_id, "routes"),
+                    source=endpoint_id,
+                    target=handler_id,
+                    type="routes",
+                    summary=f"Route {route['method'].upper()} {route['path']} handled by {route['handler']}.",
+                    weight=1.0,
+                )
+            )
+
     def _add_python_import_edges(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
-        imported_modules = set()
-        for match in PYTHON_FROM_IMPORT_RE.finditer(text):
-            mod = match.group("module")
-            if mod:
-                imported_modules.add(mod)
-        for match in PYTHON_IMPORT_RE.finditer(text):
-            mods = match.group("module")
-            if mods:
-                for mod in re.split(r",\s*", mods):
-                    imported_modules.add(mod.strip())
+        try:
+            tree = ast.parse(text)
+        except Exception:
+            return  # Skip if invalid syntax
+
+        visitor = PythonVisitor(relative, text)
+        visitor.visit(tree)
+
+        imported_modules = set(imp["module"] for imp in visitor.imports if imp["module"])
 
         for mod in imported_modules:
             if mod.startswith("."):
@@ -471,6 +667,84 @@ class StructureScanner:
                         metadata={"importPath": mod},
                     )
                 )
+
+    def _add_python_call_graph(self, store: GraphStore, python_files: list[tuple[Path, str, str]]) -> None:
+        from collections import defaultdict
+        functions_by_file = defaultdict(set)
+        functions_globally = defaultdict(set)
+        
+        visitors = {}
+        for _, relative, text in python_files:
+            try:
+                tree = ast.parse(text)
+                visitor = PythonVisitor(relative, text)
+                visitor.visit(tree)
+                visitors[relative] = visitor
+                
+                for f in visitor.functions:
+                    qname = f["qualified_name"]
+                    fid = function_id(relative, qname)
+                    functions_by_file[relative].add(qname)
+                    functions_globally[qname].add(fid)
+                    last_part = qname.split(".")[-1]
+                    functions_globally[last_part].add(fid)
+                    if "." in qname:
+                        functions_globally[qname.split(".")[-2] + "." + last_part].add(fid)
+            except Exception:
+                pass
+
+        for _, relative, text in python_files:
+            visitor = visitors.get(relative)
+            if not visitor:
+                continue
+            
+            for call in visitor.calls:
+                caller_qname = call["caller"]
+                callee_name = call["callee"]
+                caller_id = function_id(relative, caller_qname)
+                
+                resolved_id = None
+                
+                if "." in caller_qname and callee_name.startswith("self."):
+                    class_name = caller_qname.split(".")[0]
+                    method_name = callee_name.split(".", 1)[1]
+                    target_qname = f"{class_name}.{method_name}"
+                    if target_qname in functions_by_file[relative]:
+                        resolved_id = function_id(relative, target_qname)
+                
+                if not resolved_id and callee_name in functions_by_file[relative]:
+                    resolved_id = function_id(relative, callee_name)
+                
+                if not resolved_id:
+                    targets = functions_globally.get(callee_name, set())
+                    if len(targets) == 1:
+                        resolved_id = next(iter(targets))
+                    elif not targets:
+                        last_part = callee_name.split(".")[-1]
+                        targets_last = functions_globally.get(last_part, set())
+                        if len(targets_last) == 1:
+                            resolved_id = next(iter(targets_last))
+                
+                if resolved_id:
+                    store.upsert_edge(
+                        GraphEdge(
+                            id=edge_id(caller_id, resolved_id, "calls"),
+                            source=caller_id,
+                            target=resolved_id,
+                            type="calls",
+                            summary=f"{caller_qname.split('.')[-1]} calls {callee_name.split('.')[-1]}.",
+                            weight=0.8,
+                        )
+                    )
+                else:
+                    try:
+                        caller_node = store.graph.node_by_id(caller_id)
+                        if caller_node:
+                            unresolved = caller_node.metadata.setdefault("unresolved_calls", [])
+                            if callee_name not in unresolved:
+                                unresolved.append(callee_name)
+                    except Exception:
+                        pass
 
     def _add_tsjs_symbols(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
         for match in TSJS_FUNCTION_RE.finditer(text):

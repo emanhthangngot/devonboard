@@ -7,7 +7,7 @@ from uuid import NAMESPACE_URL, uuid5
 
 from backend.app.graph.models import GraphNode, KnowledgeGraph
 
-INDEXED_NODE_TYPES = {"file", "module", "source", "claim"}
+INDEXED_NODE_TYPES = {"file", "module", "function", "class", "source", "claim"}
 
 
 @dataclass
@@ -136,7 +136,7 @@ class VectorIndexService:
         client = self._client()
         self._ensure_collection(client)
         nodes = [node for node in graph.nodes if node.type in INDEXED_NODE_TYPES]
-        texts = [self._node_text(node) for node in nodes]
+        texts = [self._node_text(node, graph) for node in nodes]
         vectors = self.embedder.embed_texts(texts) if texts else []
         points = [
             self._point(node=node, vector=vector, graph=graph)
@@ -270,7 +270,45 @@ class VectorIndexService:
             "graph_generated_at": generated,
         }
 
-    def _node_text(self, node: GraphNode) -> str:
+    def _node_text(self, node: GraphNode, graph: KnowledgeGraph | None = None) -> str:
+        if node.type in {"function", "class"} and graph is not None:
+            from pathlib import Path
+            # Gather connections
+            imports_list = [edge.target for edge in graph.edges if edge.source == node.id and edge.type == "imports"]
+            calls_list = [edge.target for edge in graph.edges if edge.source == node.id and edge.type == "calls"]
+            called_by_list = [edge.source for edge in graph.edges if edge.target == node.id and edge.type == "calls"]
+            
+            snippet = ""
+            if node.file_path and node.line_range:
+                try:
+                    repo_path = Path(graph.repo.path)
+                    full_path = (repo_path / node.file_path).resolve()
+                    if full_path.is_file():
+                        lines = full_path.read_text(encoding="utf-8", errors="ignore").splitlines()
+                        start, end = node.line_range
+                        # Get up to 25 lines
+                        snippet = "\n".join(lines[start - 1 : min(end, start + 25)])
+                except Exception:
+                    pass
+
+            parts = [
+                f"Node ID: {node.id}",
+                f"Node type: {node.type}",
+                f"Name: {node.name}",
+                f"Qualified name: {node.metadata.get('qualified_name') or node.name}",
+                f"File path: {node.file_path or ''}",
+                f"Line range: {node.line_range[0]}-{node.line_range[1]}" if node.line_range else "Line range: ",
+                f"Signature: {node.metadata.get('signature') or ''}",
+                f"Docstring: {node.metadata.get('docstring') or ''}",
+                f"Summary: {node.summary or ''}",
+                f"Tags: {', '.join(node.tags)}",
+                f"Imports: {', '.join(imports_list)}",
+                f"Calls: {', '.join(calls_list)}",
+                f"Called by: {', '.join(called_by_list)}",
+                f"Surrounding code snippet:\n{snippet}" if snippet else ""
+            ]
+            return "\n".join(p for p in parts if p)
+
         parts = [node.id, node.type, node.name, node.summary, " ".join(node.tags)]
         if node.file_path:
             parts.append(node.file_path)

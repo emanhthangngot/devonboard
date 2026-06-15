@@ -40,7 +40,7 @@ class Settings(BaseSettings):
         default=Path("./devonboard/results"), alias="DEVONBOARD_RESULTS_DIR"
     )
     exclude_patterns: str = Field(
-        default=".env*,node_modules/**,vendor/**,dist/**,build/**,.git/**",
+        default=".git/**,__pycache__/**,*.pyc,.pytest_cache/**,.mypy_cache/**,.ruff_cache/**,.coverage,htmlcov/**,node_modules/**,dist/**,build/**,vendor/**,.env,.env.*,devonboard/knowledge-graph.json,devonboard/results/**",
         alias="EXCLUDE_PATTERNS",
     )
 

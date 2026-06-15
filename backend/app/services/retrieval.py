@@ -12,6 +12,7 @@ from typing import Literal
 from backend.app.config import get_settings
 from backend.app.graph.models import GraphEdge, GraphNode, KnowledgeGraph
 from backend.app.services.vector_index import VectorIndexService, VectorHit
+from backend.app.services.profiles import get_project_profile
 
 Route = Literal["structural", "historical", "hybrid"]
 QueryIntent = Literal[
@@ -90,6 +91,14 @@ class QueryResult:
     retrieval_ms: int
     synthesis_ms: int
     evidence_only: bool = False
+    llm_used: bool = False
+    llm_model: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
+    vector_used: bool = False
+    retrieval_mode: str = "hybrid"
+    route_reason: str | None = None
+    debug_info: dict[str, object] | None = None
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -102,6 +111,14 @@ class QueryResult:
             "retrieval_ms": self.retrieval_ms,
             "synthesis_ms": self.synthesis_ms,
             "evidence_only": self.evidence_only,
+            "llm_used": self.llm_used,
+            "llm_model": self.llm_model,
+            "fallback_used": self.fallback_used,
+            "fallback_reason": self.fallback_reason,
+            "vector_used": self.vector_used,
+            "retrieval_mode": self.retrieval_mode,
+            "route_reason": self.route_reason,
+            "debug_info": self.debug_info,
         }
 
 
@@ -118,6 +135,7 @@ class RetrievalService:
         self._vector_service = VectorIndexService.from_settings()
         self._vector_scores: dict[str, float] = {}
         self._file_snippet_cache: dict[str, str] = {}
+        self.profile = get_project_profile(self.graph.repo.name if self.graph.repo else "")
 
     # ------------------------------------------------------------------
     # Public API
@@ -134,17 +152,58 @@ class RetrievalService:
         route = self._route(query, mode)
         vector_hits = self._vector_hits(query, route)
 
+        self._llm_used = False
+        settings = get_settings()
+        if settings.gemini_api_key and settings.gemini_api_key.startswith("gsk_"):
+            self._llm_model = "llama-3.1-8b-instant"
+        else:
+            self._llm_model = settings.gemini_synthesis_model
+        self._fallback_used = False
+        self._fallback_reason = None
+        self._vector_used = (self._vector_service is not None)
+        self._retrieval_mode = route
+        # self._route_reason was set inside self._route()
+
+        self._debug_info = {
+            "query": query,
+            "mode_requested": mode,
+            "route": route,
+            "route_reason": getattr(self, "_route_reason", None),
+            "terms": list(self._terms(query)),
+            "intent": self._intent(query),
+            "vector_hits": [
+                {
+                    "node_id": hit.node_id,
+                    "score": round(hit.score, 4),
+                    "node_type": hit.payload.get("node_type") if hit.payload else None,
+                    "file_path": hit.payload.get("file_path") if hit.payload else None
+                }
+                for hit in vector_hits
+            ],
+            "seed_nodes": [],
+            "bfs_nodes": [],
+            "historical_nodes": [],
+            "ranked_nodes": [],
+            "file_context_paths": [],
+            "llm_used": False,
+            "fallback_used": False,
+            "prompt_preview": ""
+        }
+
         # 1. Core structural matches via text scoring.
         seed_nodes = self._structural_seed_matches(query, node_ids, vector_hits)
+        self._debug_info["seed_nodes"] = [node.id for node in seed_nodes]
 
         # 2. BFS expansion from seeds through structural edges.
         self._curr_structural_depths = {}
         structural_nodes = self._bfs_expand(seed_nodes)
+        self._debug_info["bfs_nodes"] = [node.id for node in structural_nodes]
         structural_nodes = self._rank_nodes(structural_nodes, query, is_structural=True)
 
         # 3. Historical matches via provenance edges + text fallback.
         self._curr_historical_hops = {}
         historical_nodes = self._historical_matches(structural_nodes, query, vector_hits)
+        self._debug_info["historical_nodes"] = [node.id for node in historical_nodes]
         historical_nodes = self._rank_nodes(historical_nodes, query, is_structural=False)
 
         retrieval_ms = int((time.perf_counter() - start) * 1000)
@@ -163,20 +222,41 @@ class RetrievalService:
 
         # 4. Synthesis — respect allow_external_llm guard.
         synth_start = time.perf_counter()
-        evidence_only = False
+        
         settings = get_settings()
-        if settings.gemini_api_key and not allow_external_llm:
+        external_llm_allowed = allow_external_llm and settings.allow_external_llm_for_private_repo
+        private_repo_guard_enabled = True
+        
+        if private_repo_guard_enabled and not external_llm_allowed:
+            use_llm = False
             evidence_only = True
+            self._fallback_used = True
+            self._fallback_reason = "private_repo_external_llm_not_allowed"
             warnings.append(
                 "External LLM disabled for this repository. "
                 "Returning evidence-only response."
             )
+        elif not settings.gemini_api_key:
+            use_llm = False
+            evidence_only = False
+            self._fallback_used = True
+            self._fallback_reason = "missing_gemini_api_key"
+        else:
+            use_llm = True
+            evidence_only = False
 
         answer = self._synthesize(
             query, route, structural, historical, warnings,
-            use_llm=(not evidence_only),
+            use_llm=use_llm,
         )
         synthesis_ms = int((time.perf_counter() - synth_start) * 1000)
+
+        prompt = self._get_synthesis_prompt(query, structural, historical)
+        self._debug_info["prompt_preview"] = prompt[:1500] + "..." if len(prompt) > 1500 else prompt
+        self._debug_info["llm_used"] = self._llm_used
+        self._debug_info["fallback_used"] = self._fallback_used
+        if "ranked_nodes" in self._debug_info:
+            self._debug_info["ranked_nodes"].sort(key=lambda x: x["score"], reverse=True)
 
         return QueryResult(
             answer=answer,
@@ -188,6 +268,14 @@ class RetrievalService:
             retrieval_ms=retrieval_ms,
             synthesis_ms=synthesis_ms,
             evidence_only=evidence_only,
+            llm_used=self._llm_used,
+            llm_model=self._llm_model,
+            fallback_used=self._fallback_used,
+            fallback_reason=self._fallback_reason,
+            vector_used=self._vector_used,
+            retrieval_mode=self._retrieval_mode,
+            route_reason=getattr(self, "_route_reason", None),
+            debug_info=self._debug_info,
         )
 
     def answer_stream(
@@ -243,11 +331,17 @@ class RetrievalService:
         if not evidence_only and settings.gemini_api_key:
             yielded_any = False
             try:
-                for chunk in self._call_gemini_stream(settings.gemini_api_key, query, route, structural, historical):
+                api_key = settings.gemini_api_key
+                if api_key.startswith("gsk_"):
+                    stream_generator = self._call_groq_stream(api_key, query, route, structural, historical)
+                else:
+                    stream_generator = self._call_gemini_stream(api_key, query, route, structural, historical)
+                
+                for chunk in stream_generator:
                     yielded_any = True
                     yield {"event": "token", "data": {"token": chunk}}
             except Exception as e:
-                print(f"Gemini stream generation failed: {e}")
+                print(f"Stream generation failed: {e}")
             if not yielded_any:
                 fallback = self._heuristic_synthesis(query, route, structural, historical, warnings)
                 yield {"event": "token", "data": {"token": fallback}}
@@ -265,6 +359,7 @@ class RetrievalService:
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
     ):
+        self._retrieval_mode = route
         prompt = self._get_synthesis_prompt(query, structural, historical)
         settings = get_settings()
         model = settings.gemini_synthesis_model
@@ -334,6 +429,68 @@ class RetrievalService:
         if last_error:
             raise last_error
 
+    def _call_groq_stream(
+        self,
+        api_key: str,
+        query: str,
+        route: Route,
+        structural: list[dict[str, object]],
+        historical: list[dict[str, object]],
+    ):
+        self._retrieval_mode = route
+        prompt = self._get_synthesis_prompt(query, structural, historical)
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        body = json.dumps({
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1,
+            "stream": True
+        }).encode("utf-8")
+
+        last_error = None
+        yielded_any = False
+        for attempt in range(MAX_GEMINI_RETRIES):
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    buffer = ""
+                    for chunk in response:
+                        buffer += chunk.decode("utf-8", errors="ignore")
+                        while "\n" in buffer:
+                            line, buffer = buffer.split("\n", 1)
+                            line = line.strip()
+                            if not line.startswith("data:"):
+                                continue
+                            data_str = line[5:].strip()
+                            if data_str == "[DONE]":
+                                break
+                            try:
+                                obj = json.loads(data_str)
+                                choices = obj.get("choices", [])
+                                if choices:
+                                    token = choices[0].get("delta", {}).get("content", "")
+                                    if token:
+                                        yielded_any = True
+                                        yield token
+                            except Exception:
+                                pass
+                return
+            except Exception as e:
+                last_error = e
+                if yielded_any:
+                    raise e
+                if attempt < MAX_GEMINI_RETRIES - 1:
+                    time.sleep(GEMINI_RETRY_DELAY * (2 ** attempt))
+
+        if last_error:
+            raise last_error
+
     def node_history(self, node_id: str) -> dict[str, object]:
         source_ids = self._linked_source_ids(node_id)
         claim_ids = set()
@@ -379,58 +536,110 @@ class RetrievalService:
 
     def _route(self, query: str, mode: str) -> Route:
         if mode in {"structural", "historical", "hybrid"}:
+            self._route_reason = f"User requested mode: {mode}"
             return mode  # type: ignore[return-value]
         lowered = query.lower()
 
         # Extract alphanumeric words to perform safe word-boundary matches without substring pollution.
-        words = set(re.findall(r"[a-z0-9]+", lowered))
+        # Include Vietnamese accented characters in words
+        words = set(re.findall(r"[a-z0-9àáảãạâầấẩẫậăằắẳẵặèéẻẽẹêềếểễệìíỉĩịòóỏõọôồốổỗộơờớởỡợùúủũụưừứửữựỳýỷỹỵđ]+", lowered))
 
         # Check hybrid keywords first
-        hybrid_words = {"refactor", "safe", "risk", "guardrail", "guardrails"}
-        hybrid_substrings = ["context pack", "blast radius", "impact"]
+        hybrid_words = {
+            "refactor", "safe", "risk", "guardrail", "guardrails", "impact",
+            "rủi", "ro", "rủi ro", "hưởng", "ảnh hưởng", "sửa", "nâng", "cấp", "nâng cấp",
+            "không tốt", "không đúng", "không như ý"
+        }
+        hybrid_substrings = [
+            "context pack", "blast radius", "impact",
+            "như thế nào", "hoạt động như thế nào", "xử lý như thế nào", "quy trình", "luồng query", "truy vấn"
+        ]
         if (words & hybrid_words) or any(sub in lowered for sub in hybrid_substrings):
+            self._route_reason = f"Matched hybrid keywords: {words & hybrid_words} or substrings"
             return "hybrid"
 
         # Check historical keywords next
         historical_words = {
             "why", "rationale", "decision", "chosen", "who", "when", "history",
             "alternative", "pr", "commit", "original", "prior", "bug", "incident",
-            "discussion", "leak", "leaking", "introduced", "restricted", "restricting"
+            "discussion", "leak", "leaking", "introduced", "restricted", "restricting",
+            "tại sao", "vì sao", "lý do", "nguyên nhân", "lịch sử", "thay đổi"
         }
         historical_substrings = [
             "when was", "what was", "what changed", "before this fix",
-            "before the fix", "was there", "led to", "pr #", "pull request"
+            "before the fix", "was there", "led to", "pr #", "pull request",
+            "tại sao", "vì sao", "lý do", "nguyên nhân", "lịch sử", "quyết định", "từ lúc nào", "ai đã"
         ]
         if (words & historical_words) or any(sub in lowered for sub in historical_substrings):
+            self._route_reason = f"Matched historical keywords: {words & historical_words} or substrings"
             return "historical"
 
         intent = self._intent(query)
         if intent in {"list_ordered", "architecture", "code_flow"}:
+            self._route_reason = f"Intent detected as {intent} -> routed to structural"
             return "structural"
         if intent in {"historical_rationale", "provenance", "review_comment", "negative_evidence"}:
+            self._route_reason = f"Intent detected as {intent} -> routed to historical"
             return "historical"
+        self._route_reason = f"Fallback -> routed to structural"
         return "structural"
 
     def _intent(self, query: str) -> QueryIntent:
         lowered = query.lower()
-        if any(token in lowered for token in ["refactor", "blast radius", "risk indicator", "safe to"]):
+        if any(token in lowered for token in ["refactor", "blast radius", "risk indicator", "safe to", "rủi ro", "ảnh hưởng", "nâng cấp", "sửa"]):
             return "refactor_risk"
-        if any(token in lowered for token in ["review comment", "requested in review", "reviewer"]):
+        if any(token in lowered for token in ["review comment", "requested in review", "reviewer", "nhận xét", "đánh giá"]):
             return "review_comment"
         if re.search(r"\bpr\s*#?\d+\b", lowered) or any(
             token in lowered
-            for token in ["is there a commit", "is there a pr", "which pr", "which commit", "pull request", "provenance"]
+            for token in ["is there a commit", "is there a pr", "which pr", "which commit", "pull request", "provenance", "lịch sử", "thay đổi"]
         ):
             return "provenance"
-        if any(token in lowered for token in ["how", "implemented", "which struct", "which interface", "code flow"]):
+        
+        # Code-flow / function lookup tokens
+        code_flow_tokens = [
+            "how", "implemented", "which struct", "which interface", "code flow", "luồng", "hoạt động", "xử lý",
+            "which function", "what function", "which method", "what method", "where is", "where located", "located in",
+            "routes", "route to", "dispatch", "dispatches", "handler", "calls", "caller", "callee", "entrypoint",
+            "tool call", "exec tool", "maps to", "invokes",
+            "hàm nào", "function nào", "nằm ở đâu", "ở file nào", "gọi tới", "định tuyến", "route tới", "xử lý tool", "exec tool"
+        ]
+        if any(token in lowered for token in code_flow_tokens):
             return "code_flow"
-        if any(token in lowered for token in ["why", "rationale", "decision", "chosen", "instead of", "tradeoff", "alternative"]):
+            
+        if any(token in lowered for token in ["why", "rationale", "decision", "chosen", "instead of", "tradeoff", "alternative", "tại sao", "vì sao", "lý do", "nguyên nhân"]):
             return "historical_rationale"
-        if any(token in lowered for token in ["list", "execution order", "in order", "ordered"]):
+        if any(token in lowered for token in ["list", "execution order", "in order", "ordered", "danh sách"]):
             return "list_ordered"
-        if any(token in lowered for token in ["architecture", "pipeline", "tier", "l0", "l1", "l2", "memory", "vault"]):
+        if any(token in lowered for token in ["architecture", "pipeline", "tier", "l0", "l1", "l2", "memory", "vault", "kiến trúc", "tổng quan", "hệ thống", "backend"]):
             return "architecture"
         return "architecture"
+
+    def _path_constraints(self, query: str) -> list[str]:
+        lowered = query.lower()
+        patterns = [
+            r"\bin\s+([\w./-]+)",
+            r"\blocated in\s+([\w./-]+)",
+            r"\bnằm ở\s+([\w./-]+)",
+            r"\bnằm trong\s+([\w./-]+)",
+            r"\btrong thư mục\s+([\w./-]+)",
+            r"\bở thư mục\s+([\w./-]+)",
+        ]
+        constraints = []
+        for pat in patterns:
+            for match in re.findall(pat, lowered):
+                path = match.strip().strip(",.;?!")
+                if path:
+                    constraints.append(path)
+        
+        # Also extract words containing slashes (excluding URLs)
+        for word in lowered.split():
+            if "/" in word and not word.startswith("http"):
+                cleaned_word = re.sub(r"^[^a-z0-9/]+|[^a-z0-9/]+$", "", word)
+                if cleaned_word and cleaned_word not in constraints:
+                    constraints.append(cleaned_word)
+                    
+        return list(set(constraints))
 
     # ------------------------------------------------------------------
     # Term extraction & node scoring
@@ -796,43 +1005,187 @@ class RetrievalService:
     # File content injection for LLM context
     # ------------------------------------------------------------------
 
-    def _get_files_context(self, structural: list[dict[str, object]]) -> str:
+    def _get_files_context(
+        self,
+        structural: list[dict[str, object]],
+        historical: list[dict[str, object]] | None = None,
+    ) -> str:
         if not self.graph.repo or not self.graph.repo.path:
             return ""
 
-        repo_dir = Path(self.graph.repo.path)
-        contents = []
-        read_paths: set[Path] = set()
+        repo_dir = Path(self.graph.repo.path).resolve()
+        
+        # Collect nodes from both structural and historical evidence
+        nodes_to_process = []
+        seen_node_ids = set()
 
         for item in structural:
             node_id = item.get("node_id")
-            if not node_id:
+            if not node_id or node_id in seen_node_ids:
                 continue
-            try:
-                node = self.graph.node_by_id(node_id)
-            except KeyError:
-                continue
+            node = self._nodes_by_id.get(node_id)
+            if node:
+                seen_node_ids.add(node_id)
+                nodes_to_process.append(node)
 
+        for item in (historical or []):
+            node_id = item.get("node_id")
+            if not node_id or node_id in seen_node_ids:
+                continue
+            node = self._nodes_by_id.get(node_id)
+            if node:
+                seen_node_ids.add(node_id)
+                nodes_to_process.append(node)
+
+        # Group requested nodes and intervals by file_path
+        from collections import defaultdict
+        file_ranges = defaultdict(list)
+
+        for node in nodes_to_process:
+            if not node.file_path:
+                continue
+            
+            # Protect path traversal
             file_path_str = node.file_path
-            if not file_path_str:
-                continue
-
             full_path = (repo_dir / file_path_str).resolve()
-            if full_path in read_paths:
-                continue
-
             try:
                 full_path.relative_to(repo_dir)
             except ValueError:
                 continue
 
-            if full_path.is_file():
-                try:
-                    text = full_path.read_text(encoding="utf-8", errors="ignore")[:12000]
-                    contents.append(f"--- File: {file_path_str} ---\n{text}\n")
-                    read_paths.add(full_path)
-                except Exception as e:
-                    print(f"Error reading file {file_path_str}: {e}")
+            # Skip cache, binaries and irrelevant output files
+            lowered_path = file_path_str.lower()
+            if any(
+                pat in lowered_path
+                for pat in [
+                    "__pycache__", ".pytest_cache", ".pyc", ".git", ".mypy_cache",
+                    ".ruff_cache", ".coverage", "htmlcov", "node_modules", "dist",
+                    "build", "vendor", ".env", "knowledge-graph.json"
+                ]
+            ):
+                continue
+
+            # Determine relationship
+            relationship = "direct evidence"
+            if node.id in getattr(self, "_curr_structural_depths", {}):
+                depth = self._curr_structural_depths[node.id]
+                relationship = "direct evidence" if depth == 0 else "neighboring evidence"
+            elif node.id in getattr(self, "_curr_historical_hops", {}):
+                relationship = "historical evidence"
+
+            start_line, end_line = None, None
+            if node.line_range and len(node.line_range) == 2:
+                start_line, end_line = node.line_range[0], node.line_range[1]
+
+            file_ranges[file_path_str].append({
+                "node_id": node.id,
+                "name": node.name,
+                "type": node.type,
+                "start": start_line,
+                "end": end_line,
+                "relationship": relationship
+            })
+
+        contents = []
+        for file_path_str, intervals in file_ranges.items():
+            full_path = (repo_dir / file_path_str).resolve()
+            if not full_path.is_file():
+                continue
+
+            try:
+                text = full_path.read_text(encoding="utf-8", errors="ignore")
+                file_lines = text.splitlines()
+                total_lines = len(file_lines)
+            except Exception as e:
+                print(f"Error reading file {file_path_str}: {e}")
+                continue
+
+            if total_lines == 0:
+                continue
+
+            # Merge intervals
+            explicit_intervals = []
+            has_full_file = False
+            full_file_relationship = "direct evidence"
+
+            for inv in intervals:
+                if inv["start"] is not None and inv["end"] is not None:
+                    explicit_intervals.append(inv)
+                else:
+                    has_full_file = True
+                    full_file_relationship = inv["relationship"]
+
+            explicit_intervals.sort(key=lambda x: x["start"])
+            merged = []
+            for inv in explicit_intervals:
+                if not merged:
+                    merged.append({
+                        "start": inv["start"],
+                        "end": inv["end"],
+                        "relationships": {inv["relationship"]},
+                        "nodes": [f"{inv['type']} {inv['name']}"]
+                    })
+                else:
+                    last = merged[-1]
+                    # Merge overlapping or near intervals (gap <= 15 lines)
+                    if inv["start"] <= last["end"] + 15:
+                        last["end"] = max(last["end"], inv["end"])
+                        last["relationships"].add(inv["relationship"])
+                        last["nodes"].append(f"{inv['type']} {inv['name']}")
+                    else:
+                        merged.append({
+                            "start": inv["start"],
+                            "end": inv["end"],
+                            "relationships": {inv["relationship"]},
+                            "nodes": [f"{inv['type']} {inv['name']}"]
+                        })
+
+            if has_full_file:
+                if not merged:
+                    merged.append({
+                        "start": 1,
+                        "end": 100,
+                        "relationships": {full_file_relationship},
+                        "nodes": ["file header"]
+                    })
+                else:
+                    if merged[0]["start"] > 30:
+                        merged.insert(0, {
+                            "start": 1,
+                            "end": 30,
+                            "relationships": {full_file_relationship},
+                            "nodes": ["file header"]
+                        })
+
+            # Read and append the snippets
+            for interval in merged:
+                start = max(1, interval["start"])
+                end = min(total_lines, interval["end"])
+                if start > end:
+                    continue
+                # limit size of any single snippet to 150 lines
+                if end - start > 150:
+                    end = start + 150
+
+                snippet_lines = file_lines[start - 1 : end]
+                snippet_text = "\n".join(snippet_lines)
+
+                rel_set = interval["relationships"]
+                if "direct evidence" in rel_set:
+                    rel_label = "direct evidence"
+                elif "neighboring evidence" in rel_set:
+                    rel_label = "neighboring evidence"
+                else:
+                    rel_label = "historical evidence"
+
+                nodes_label = ", ".join(interval["nodes"])
+                header = f"--- File: {file_path_str} (Lines {start}-{end}) [{rel_label} - {nodes_label}] ---"
+                contents.append(f"{header}\n{snippet_text}\n")
+
+                if hasattr(self, "_debug_info") and isinstance(self._debug_info, dict):
+                    self._debug_info.setdefault("file_context_paths", []).append(
+                        f"{file_path_str}:{start}-{end}"
+                    )
 
         if contents:
             return "\n" + "\n".join(contents)
@@ -856,13 +1209,73 @@ class RetrievalService:
         api_key = settings.gemini_api_key
 
         if api_key and use_llm:
-            result = self._call_gemini(api_key, query, route, structural, historical)
-            if result:
-                return result
-            # Gemini failed — fall through to heuristic synthesis.
+            try:
+                if api_key.startswith("gsk_"):
+                    result = self._call_groq(api_key, query, route, structural, historical)
+                else:
+                    result = self._call_gemini(api_key, query, route, structural, historical)
+                
+                if result:
+                    self._llm_used = True
+                    self._fallback_used = False
+                    self._fallback_reason = None
+                    return result
+                else:
+                    self._llm_used = False
+                    self._fallback_used = True
+                    self._fallback_reason = "llm_api_error"
+            except Exception as e:
+                self._llm_used = False
+                self._fallback_used = True
+                self._fallback_reason = f"llm_api_error: {str(e)}"
 
         # Heuristic / rule-based fallback synthesis.
         return self._heuristic_synthesis(query, route, structural, historical, warnings)
+
+    def _call_groq(
+        self,
+        api_key: str,
+        query: str,
+        route: Route,
+        structural: list[dict[str, object]],
+        historical: list[dict[str, object]],
+    ) -> str | None:
+        self._retrieval_mode = route
+        prompt = self._get_synthesis_prompt(query, structural, historical)
+        
+        url = "https://api.groq.com/openai/v1/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        
+        body = json.dumps({
+            "model": "llama-3.1-8b-instant",
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": 0.1
+        }).encode("utf-8")
+
+        last_error = None
+        for attempt in range(MAX_GEMINI_RETRIES):
+            req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+            try:
+                with urllib.request.urlopen(req, timeout=30) as response:
+                    res_data = json.loads(response.read().decode("utf-8"))
+                    choices = res_data.get("choices", [])
+                    if choices:
+                        ans_text = str(choices[0].get("message", {}).get("content", "")).strip()
+                        if ans_text:
+                            return ans_text
+                return None
+            except Exception as e:
+                last_error = e
+                if attempt < MAX_GEMINI_RETRIES - 1:
+                    time.sleep(GEMINI_RETRY_DELAY * (2 ** attempt))
+        if last_error:
+            raise last_error
+        return None
 
     def _get_synthesis_prompt(
         self,
@@ -872,32 +1285,82 @@ class RetrievalService:
     ) -> str:
         structural_text = "\n".join(f"- {item['label']}: {item['summary']}" for item in structural[:5])
         historical_text = "\n".join(f"- {item['label']}: {item['summary']}" for item in historical[:8])
-        files_context = self._get_files_context(structural)
+        files_context = self._get_files_context(structural, historical)
+        route = getattr(self, "_retrieval_mode", "hybrid")
+        intent = self._intent(query)
 
-        return f"""You are DevOnboard AI, a helpful agentic coding assistant.
-Your task is to answer the user's query using only the provided codebase structure, history, and file contents.
+        # Build evidence table
+        evidence_lines = []
+        for idx, item in enumerate(structural[:8]):
+            evidence_lines.append(f"| S-{idx+1} | {item['node_id']} | {item['type']} | {item['label']} | {item['summary']} |")
+        for idx, item in enumerate(historical[:8]):
+            evidence_lines.append(f"| H-{idx+1} | {item['node_id']} | {item['type']} | {item['label']} | {item['summary']} |")
+        evidence_table = "\n".join(evidence_lines) if evidence_lines else "No direct evidence retrieved."
 
-User Query:
-{query}
+        return f"""You are DevOnboard AI, an elite backend engineer and codebase-reasoning assistant.
+You are tasked with answering the user's query using ONLY the provided codebase structure, history, and file contents.
 
-Retrieved Codebase Structure (Nodes & Summaries):
-{structural_text}
+### Query Context
+- **User Query**: {query}
+- **Selected Route**: {route}
+- **Intent Profile**: {intent}
 
-Retrieved Codebase History (Commits & Claims):
-{historical_text}
+### Evidence Table
+| ID | Node ID | Type | Label | Summary |
+|---|---|---|---|---|
+{evidence_table}
 
-Retrieved File Contents:
-{files_context}
+### Structural Evidence
+{structural_text if structural_text else "No structural evidence."}
 
-Instructions:
-1. Answer the user query clearly and accurately.
-2. Ground your answer strictly in the provided structural details, history, and file contents. Do not assume or extrapolate beyond what is present.
-3. Cite the files, classes, functions, or commits used in your answer using their exact names or IDs (e.g. `[filename](file:///path/to/file)` or `[source:commit:abcd]`).
-4. If the retrieved evidence is insufficient to answer the query, state what is missing and present the available facts honestly.
-5. When both structural and historical evidence are present, separate your answer into "How it works" and "Why / History" sections.
-6. For structural, code flow, or call flow queries (such as tracing a function execution path, listing interface methods or implementing files), extract and present a granular, step-by-step function/call trace. For each step, detail the caller package/file, called functions, parameters, routing/dispatching logic, and return values/state transitions.
+### Historical Evidence
+{historical_text if historical_text else "No historical evidence."}
 
-Provide your answer in markdown:
+### Code Snippets & File Contexts
+{files_context if files_context.strip() else "No code snippets retrieved."}
+
+### Critical Response Rules:
+1. **Groundedness**: Answer ONLY from the provided evidence. Cite node IDs exactly. If the evidence does not contain the answer, say "The provided retrieval evidence is insufficient to answer the query." and state exactly what is missing. Do not make up facts, file paths, or hashes.
+2. **Citations Format**: Cite nodes and files using exactly these formats so the Web UI can parse and bind them:
+   - Code Files: Use `[node:file:relative_path_or_file_name]` (e.g. [node:file:app/services/retrieval.py] or [node:file:db.go]). The path inside must match `[\\w./-]+` (no spaces or backslashes).
+   - Commits: Use `[source:commit:hash]` (e.g. [source:commit:c1d76326]). The hash must be alphanumeric (`\\w+`).
+   - Claims / Decisions: Use `[node:claim:claim_id]` (e.g. [node:claim:pool_limit_lock]). The ID must be alphanumeric (`\\w+`).
+   CRITICAL: Do NOT use standard markdown link syntax (e.g. do NOT write `[auth.go](file:///...)`). Use only the bracketed node notation above. Never invent hashes or file paths.
+3. **Fact vs. Inference Separation**: Clearly separate verified facts (present in the snippets/nodes) from logical inferences. Avoid blaming the LLM when evidence is weak.
+4. **Issue Classification**: If diagnosing why something fails or is wrong, distinguish clearly between:
+   - Architecture issue
+   - Retrieval issue (missing/noisy files in index)
+   - Prompt issue (insufficient instructions)
+   - LLM reasoning issue
+   - Configuration / fallback issue
+
+### Required Answer Format:
+For diagnosis-style, troubleshooting, or evaluation queries, you MUST use the following headers:
+## Verdict
+[A brief 1-2 sentence high-level judgment/conclusion]
+
+## Root causes
+[List of underlying causes supported directly by the evidence]
+
+## Evidence
+[Direct citations of evidence with their node IDs]
+
+## What is architecture-related
+[Architectural limitations or components involved]
+
+## What is prompt-related
+[Prompt deficiencies or instructions required]
+
+## What is LLM-related
+[LLM reasoning or limits]
+
+## Highest-priority fixes
+[Actionable remediation steps]
+
+## Test plan
+[How to verify the fix]
+
+For other normal informational queries, you may use standard markdown headings but you MUST separate your answer into "How it works" and "Why / History" sections (if both structural and historical evidence are present), and you must still strictly cite node IDs.
 """
 
     def _call_gemini(
@@ -908,6 +1371,7 @@ Provide your answer in markdown:
         structural: list[dict[str, object]],
         historical: list[dict[str, object]],
     ) -> str | None:
+        self._retrieval_mode = route
         prompt = self._get_synthesis_prompt(query, structural, historical)
         # P0 fix: API key in header (x-goog-api-key) instead of URL query parameter.
         settings = get_settings()
@@ -955,8 +1419,57 @@ Provide your answer in markdown:
     ) -> str:
         """Deterministic fallback synthesis when no LLM is available."""
         lowered_query = query.lower()
+        intent = self._intent(query)
+        
+        # 1. Custom code_flow fallback response answering function/class lookups
+        if intent == "code_flow":
+            lines = ["### Structural Code Flow Analysis (Heuristic Fallback)"]
+            
+            functions = [s for s in structural if s.get("type") == "function"]
+            classes = [s for s in structural if s.get("type") == "class"]
+            files = [s for s in structural if s.get("type") == "file"]
+            
+            def file_from_node_id(node_id: str, default: str) -> str:
+                parts = node_id.split(":")
+                if len(parts) >= 3 and parts[0] in {"function", "class", "method"}:
+                    return parts[1]
+                return default
+            
+            if functions:
+                lines.append("\n**Key Functions Found:**")
+                for fn in functions[:5]:
+                    fn_file = file_from_node_id(str(fn.get("node_id", "")), str(fn.get("label", "")))
+                    lines.append(f"- **`{fn['label']}`** in `[node:file:{fn_file}]`")
+                    if fn.get("summary"):
+                        lines.append(f"  *Summary:* {fn['summary']}")
+                    if fn.get("snippet"):
+                        # Show the first line of the snippet as signature preview
+                        first_line = fn["snippet"].strip().split("\n")[0]
+                        lines.append(f"  *Signature Preview:* `{first_line}`")
+            
+            if classes:
+                lines.append("\n**Key Classes Found:**")
+                for cls in classes[:3]:
+                    cls_file = file_from_node_id(str(cls.get("node_id", "")), str(cls.get("label", "")))
+                    lines.append(f"- **`{cls['label']}`** in `[node:file:{cls_file}]`")
+                    if cls.get("summary"):
+                        lines.append(f"  *Summary:* {cls['summary']}")
+            
+            if files:
+                lines.append("\n**Relevant Code Files:**")
+                for f in files[:5]:
+                    lines.append(f"- `[node:file:{f['label']}]`: {f['summary']}")
+                    
+            if not functions and not classes and not files:
+                lines.append("No code structural evidence could be heuristic-analyzed.")
+            else:
+                print("WARNING: Gemini synthesis is currently disabled or unavailable. Above is the structured evidence retrieved from the codebase graph.")
+                
+            return "\n".join(lines)
+            
+        # 2. Existing fallback logic for pipeline, memory tiers, and default structural/historical summaries
         is_pipeline_query = any(k in lowered_query for k in ["pipeline", "stage", "execution", "goclaw", "run"])
-        ordered_pipeline = self._ordered_pipeline_answer(structural) if (self._intent(query) == "list_ordered" and is_pipeline_query) else None
+        ordered_pipeline = self._ordered_pipeline_answer(structural) if (intent == "list_ordered" and is_pipeline_query) else None
         if ordered_pipeline:
             return ordered_pipeline
         memory_tiers = self._memory_tiers_answer(query, structural)
@@ -1052,7 +1565,33 @@ Provide your answer in markdown:
                 source_quality = 0.5
 
             intent_boost = 0.0
+            if node.file_path and self.profile.boost_files:
+                import fnmatch
+                for boost_file in self.profile.boost_files:
+                    if fnmatch.fnmatch(node.file_path, boost_file) or node.file_path.endswith(boost_file):
+                        intent_boost += 0.35
+                        break
+
             quality_penalty = 0.0
+
+            # Path constraint matching
+            path_constraints = self._path_constraints(query)
+            if path_constraints:
+                matched_constraint = False
+                if node.file_path:
+                    import fnmatch
+                    normalized_fp = node.file_path.replace("\\", "/").lower()
+                    for constraint in path_constraints:
+                        clean_c = constraint.lower().strip("/")
+                        if clean_c:
+                            if clean_c in normalized_fp or fnmatch.fnmatch(normalized_fp, f"*{clean_c}*"):
+                                matched_constraint = True
+                                break
+                if matched_constraint:
+                    intent_boost += 0.5
+                else:
+                    quality_penalty += 0.5
+
             if is_structural and intent in {"architecture", "list_ordered"}:
                 if self._is_doc_node(node):
                     intent_boost += 0.35
@@ -1070,8 +1609,18 @@ Provide your answer in markdown:
                 if self._contains_memory_tiers(node):
                     intent_boost += 0.5
             if is_structural and intent == "code_flow":
-                if node.type in {"function", "class", "module"}:
-                    intent_boost += 0.35
+                # Prioritize functions/classes and non-doc source files
+                if node.type in {"function", "class"}:
+                    intent_boost += 0.5
+                elif node.type == "file" and not self._is_doc_node(node):
+                    intent_boost += 0.4
+                elif node.type == "module":
+                    intent_boost += 0.25
+
+                # Penalize documentation files
+                if self._is_doc_node(node):
+                    quality_penalty += 0.6
+
                 if self._query_mentions_memory_tiers(query) and self._contains_memory_tiers(node):
                     intent_boost += 0.45
                     if self._is_primary_architecture_doc(node):
@@ -1083,8 +1632,6 @@ Provide your answer in markdown:
                     or (self._is_primary_architecture_doc(node) and self._contains_memory_tiers(node))
                 ):
                     quality_penalty += 0.65
-                if self._is_doc_node(node) and self._is_primary_architecture_doc(node):
-                    intent_boost += 0.2
                 if self._is_secondary_doc(node):
                     quality_penalty += 0.35
                 if self._is_test_node(node):
@@ -1116,15 +1663,29 @@ Provide your answer in markdown:
                 - quality_penalty
             )
             scored.append((score, node))
+            if hasattr(self, "_debug_info") and isinstance(self._debug_info, dict):
+                self._debug_info.setdefault("ranked_nodes", []).append({
+                    "node_id": node.id,
+                    "score": round(score, 4),
+                    "score_breakdown": {
+                        "graph_link_strength": round(graph_link_strength, 4),
+                        "semantic_similarity": round(semantic_similarity, 4),
+                        "source_quality": round(source_quality, 4),
+                        "recency": round(recency, 4),
+                        "intent_boost": round(intent_boost, 4),
+                        "quality_penalty": round(quality_penalty, 4)
+                    }
+                })
 
         scored.sort(key=lambda x: x[0], reverse=True)
         return [node for _, node in scored]
 
     def _contains_ordered_pipeline_stages(self, node: GraphNode) -> bool:
+        if not self.profile.pipeline_stages:
+            return False
         text = re.sub(r"[^a-z0-9]+", " ", self._node_search_text(node))
-        stages = ["context", "history", "prompt", "think", "act", "observe", "memory", "summarize"]
         positions = []
-        for stage in stages:
+        for stage in self.profile.pipeline_stages:
             pos = text.find(stage)
             if pos < 0:
                 return False
@@ -1132,39 +1693,32 @@ Provide your answer in markdown:
         return positions == sorted(positions)
 
     def _query_mentions_memory_tiers(self, query: str) -> bool:
+        if not self.profile.memory_tiers:
+            return False
         lowered = query.lower()
-        return "l0" in lowered and "l1" in lowered and "l2" in lowered
+        return all(tier in lowered for tier in self.profile.memory_tiers)
 
     def _contains_memory_tiers(self, node: GraphNode) -> bool:
+        if not self.profile.memory_tiers:
+            return False
         text = self._node_search_text(node)
-        return all(token in text for token in ["l0", "l1", "l2"]) and any(
+        return all(token in text for token in self.profile.memory_tiers) and any(
             token in text for token in ["progressive", "auto-inject", "auto injection", "memory_search", "memory_expand"]
         )
 
     def _is_primary_architecture_doc(self, node: GraphNode) -> bool:
         path = (node.file_path or node.id).lower()
-        return path in {"agents.md", "claude.md", "readme.md"} or path.startswith("docs/00-") or path.startswith("docs/06-") or path.startswith("docs/07-") or path.startswith("docs/24-")
+        return any(path == doc or path.startswith(doc) for doc in self.profile.primary_architecture_docs)
 
     def _is_secondary_doc(self, node: GraphNode) -> bool:
         path = (node.file_path or node.id).lower()
-        return path.startswith("docs/journals/") or path.startswith("plans/") or path.startswith("skills/")
+        return any(path.startswith(doc) for doc in self.profile.secondary_docs)
 
     def _is_memory_implementation_node(self, node: GraphNode) -> bool:
         if self._is_test_node(node):
             return False
         path = (node.file_path or node.id).lower()
-        return path.startswith(
-            (
-                "internal/memory/",
-                "internal/consolidation/",
-                "internal/agent/",
-                "internal/tools/memory",
-                "internal/vault/",
-                "internal/store/episodic",
-                "internal/store/pg/episodic",
-                "internal/store/sqlitestore/episodic",
-            )
-        )
+        return any(path.startswith(prefix) for prefix in self.profile.memory_implementation_prefixes)
 
     def _dedupe_nodes(self, nodes: list[GraphNode]) -> list[GraphNode]:
         seen: set[str] = set()
@@ -1180,9 +1734,9 @@ Provide your answer in markdown:
         if self._vector_service is None:
             return []
         node_types = {
-            "structural": ["file", "module"],
+            "structural": ["file", "module", "function", "class"],
             "historical": ["source", "claim"],
-            "hybrid": ["file", "module", "source", "claim"],
+            "hybrid": ["file", "module", "function", "class", "source", "claim"],
         }[route]
         try:
             hits = self._vector_service.search(query, node_types=node_types, limit=12)
