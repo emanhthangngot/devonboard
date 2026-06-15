@@ -262,7 +262,9 @@ Instructions:
 
 Provide your answer in markdown:
 """
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:streamGenerateContent"
+        settings = get_settings()
+        model = settings.gemini_synthesis_model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:streamGenerateContent"
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key,
@@ -681,7 +683,9 @@ Instructions:
 Provide your answer in markdown:
 """
         # P0 fix: API key in header (x-goog-api-key) instead of URL query parameter.
-        url = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+        settings = get_settings()
+        model = settings.gemini_synthesis_model
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
         headers = {
             "Content-Type": "application/json",
             "x-goog-api-key": api_key,

@@ -1,6 +1,4 @@
-from pathlib import Path
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.app.config import get_settings
@@ -27,14 +25,20 @@ class ScanRequest(BaseModel):
 
 
 @router.post("/scan", status_code=202)
-def post_scan(request: ScanRequest) -> dict[str, object]:
+def post_scan(request: ScanRequest, background_tasks: BackgroundTasks) -> dict[str, object]:
+    _scan_status.update({"status": "running", "progress": 0, "message": "Queued", "error": None})
+    background_tasks.add_task(_run_scan, request)
+    return _scan_status
+
+
+def _run_scan(request: ScanRequest) -> None:
+    from backend.app.main import set_cached_graph, invalidate_graph_cache
+    invalidate_graph_cache()
     settings = get_settings()
     exclude_patterns = request.exclude_patterns or [
-        pattern.strip()
-        for pattern in settings.exclude_patterns.split(",")
-        if pattern.strip()
+        p.strip() for p in settings.exclude_patterns.split(",") if p.strip()
     ]
-    _scan_status.update({"status": "running", "progress": 10, "message": "Scanning", "error": None})
+    _scan_status.update({"status": "running", "progress": 10, "message": "Scanning"})
     try:
         resolved = resolve_repository_input(
             request.repo_path,
@@ -51,12 +55,8 @@ def post_scan(request: ScanRequest) -> dict[str, object]:
         ).scan()
         store = GraphStore(path=settings.devonboard_graph_path, repo=graph.repo, graph=graph)
         store.save()
-    except (FileNotFoundError, ValueError) as exc:
-        _scan_status.update({"status": "error", "progress": 0, "error": str(exc)})
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-
-    _scan_status.update(
-        {
+        set_cached_graph(graph)
+        _scan_status.update({
             "status": "done",
             "progress": 100,
             "message": f"Scanned {len(graph.nodes)} nodes and {len(graph.edges)} edges.",
@@ -65,9 +65,10 @@ def post_scan(request: ScanRequest) -> dict[str, object]:
             "resolved_repo_path": str(resolved.path),
             "repo_url": resolved.url,
             "repo_name": resolved.name,
-        }
-    )
-    return _scan_status
+        })
+    except Exception as exc:
+        _scan_status.update({"status": "error", "progress": 0, "error": str(exc)})
+
 
 
 @router.get("/scan/status")

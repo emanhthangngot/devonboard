@@ -17,6 +17,14 @@ class Settings(BaseSettings):
     target_repo_commit: str | None = Field(default=None, alias="TARGET_REPO_COMMIT")
     github_token: str | None = Field(default=None, alias="GITHUB_TOKEN")
     gemini_api_key: str | None = Field(default=None, alias="GEMINI_API_KEY")
+    gemini_synthesis_model: str = Field(
+        default="gemini-2.5-flash",
+        alias="GEMINI_SYNTHESIS_MODEL",
+    )
+    gemini_classifier_model: str = Field(
+        default="gemini-2.5-flash-lite",
+        alias="GEMINI_CLASSIFIER_MODEL",
+    )
     qdrant_url: str | None = Field(default=None, alias="QDRANT_URL")
     allow_external_llm_for_private_repo: bool = Field(
         default=False, alias="ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO"

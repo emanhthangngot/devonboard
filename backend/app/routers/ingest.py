@@ -1,7 +1,4 @@
-import subprocess
-from pathlib import Path
-
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException
 from pydantic import BaseModel
 
 from backend.app.config import get_settings
@@ -30,7 +27,9 @@ class IngestHistoryRequest(BaseModel):
 
 
 @router.post("/ingest/history", status_code=202)
-def post_ingest_history(request: IngestHistoryRequest | None = None) -> dict[str, object]:
+def post_ingest_history(
+    background_tasks: BackgroundTasks, request: IngestHistoryRequest | None = None
+) -> dict[str, object]:
     settings = get_settings()
     request = request or IngestHistoryRequest(max_commits=settings.max_commits_ingest)
     if not settings.devonboard_graph_path.exists():
@@ -39,7 +38,18 @@ def post_ingest_history(request: IngestHistoryRequest | None = None) -> dict[str
         raise HTTPException(status_code=404, detail=message)
 
     _ingest_status.update(
-        {"status": "running", "progress": 10, "message": "Ingesting history", "error": None}
+        {"status": "running", "progress": 10, "message": "Queued", "error": None}
+    )
+    background_tasks.add_task(_run_ingest_history, request)
+    return _ingest_status
+
+
+def _run_ingest_history(request: IngestHistoryRequest) -> None:
+    from backend.app.main import get_cached_graph, set_cached_graph, invalidate_graph_cache
+    invalidate_graph_cache()
+    settings = get_settings()
+    _ingest_status.update(
+        {"status": "running", "progress": 20, "message": "Ingesting history", "error": None}
     )
     try:
         store = GraphStore.load(settings.devonboard_graph_path)
@@ -60,24 +70,23 @@ def post_ingest_history(request: IngestHistoryRequest | None = None) -> dict[str
         graph.repo.commit = resolved.commit
         store.graph = graph
         store.save()
-    except (subprocess.CalledProcessError, ValueError) as exc:
+        set_cached_graph(graph)
+        _ingest_status.update(
+            {
+                "status": "done",
+                "progress": 100,
+                "message": f"Ingested up to {request.max_commits} commits.",
+                "warnings": [],
+                "error": None,
+                "resolved_repo_path": str(resolved.path),
+                "repo_url": resolved.url,
+                "repo_name": resolved.name,
+            }
+        )
+    except Exception as exc:
         message = f"Git history ingest failed: {exc}"
         _ingest_status.update({"status": "error", "progress": 0, "error": message})
-        raise HTTPException(status_code=422, detail=message) from exc
 
-    _ingest_status.update(
-        {
-            "status": "done",
-            "progress": 100,
-            "message": f"Ingested up to {request.max_commits} commits.",
-            "warnings": [],
-            "error": None,
-            "resolved_repo_path": str(resolved.path),
-            "repo_url": resolved.url,
-            "repo_name": resolved.name,
-        }
-    )
-    return _ingest_status
 
 
 @router.get("/ingest/history/status")

@@ -10,6 +10,11 @@ GO_FUNCTION_RE = re.compile(r"^func\s+(?:\([^)]*\)\s*)?(?P<name>[A-Za-z_][A-Za-z
 GO_IMPORT_RE = re.compile(r'import\s+(?:\((?P<block>.*?)\)|"(?P<single>[^"]+)")', re.DOTALL)
 GO_IMPORT_PATH_RE = re.compile(r'"([^"]+)"')
 GO_TYPE_RE = re.compile(r"^type\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+", re.MULTILINE)
+GO_CALL_RE = re.compile(
+    r"\b(?P<receiver>[A-Z][A-Za-z0-9]*)\.(?P<method>[A-Za-z][A-Za-z0-9]*)\s*\(|"  # StructType.Method(
+    r"\b(?P<func>[A-Z][A-Za-z0-9]*)\s*\(",                                          # ExportedFunc(
+    re.MULTILINE,
+)
 
 PYTHON_FUNCTION_RE = re.compile(r"^[ \t]*def\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", re.MULTILINE)
 PYTHON_CLASS_RE = re.compile(r"^[ \t]*class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:\(]", re.MULTILINE)
@@ -94,6 +99,7 @@ class StructureScanner:
             text = path.read_text(encoding="utf-8", errors="ignore")
             self._add_go_symbols(store, relative, text, file_node.id)
             self._add_go_import_edges(store, relative, text, file_node.id)
+            self._add_go_call_edges(store, relative, text, file_node.id)
         elif relative.endswith((".py", ".pyw")):
             text = path.read_text(encoding="utf-8", errors="ignore")
             self._add_python_symbols(store, relative, text, file_node.id)
@@ -128,9 +134,68 @@ class StructureScanner:
             )
         )
 
+    def _line_of(self, text: str, match_start: int) -> int:
+        """Return 1-indexed line number for a match position in text."""
+        return text[:match_start].count("\n") + 1
+
+    def _add_go_call_edges(
+        self, store: GraphStore, relative: str, text: str, file_node_id: str
+    ) -> None:
+        """
+        Create approximate `calls` edges between functions in the same file
+        and exported functions called from other files.
+        Only links calls where the callee already exists as a graph node —
+        avoids creating dangling references to stdlib or vendor functions.
+        """
+        existing_function_ids = {
+            node.id for node in store.graph.nodes if node.type == "function"
+        }
+        # Find all function definitions in this file to use as callers
+        caller_ranges: list[tuple[str, int, int]] = []
+        lines = text.splitlines()
+        total_lines = len(lines)
+        for match in GO_FUNCTION_RE.finditer(text):
+            fname = match.group("name")
+            fid = function_id(relative, fname)
+            start_line = self._line_of(text, match.start())
+            caller_ranges.append((fid, start_line, total_lines))
+
+        # Assign each function an end line (start of next function - 1)
+        for i in range(len(caller_ranges) - 1):
+            caller_ranges[i] = (
+                caller_ranges[i][0],
+                caller_ranges[i][1],
+                caller_ranges[i + 1][1] - 1,
+            )
+
+        for caller_id, start, end in caller_ranges:
+            body_lines = lines[start - 1 : end]
+            body_text = "\n".join(body_lines)
+            seen_callees: set[str] = set()
+            for m in GO_CALL_RE.finditer(body_text):
+                callee_name = m.group("method") or m.group("func")
+                if not callee_name:
+                    continue
+                # Try to find a matching function node anywhere in the graph
+                for fid in existing_function_ids:
+                    if fid.endswith(f":{callee_name}") and fid != caller_id:
+                        if fid not in seen_callees:
+                            seen_callees.add(fid)
+                            store.upsert_edge(
+                                GraphEdge(
+                                    id=edge_id(caller_id, fid, "calls"),
+                                    source=caller_id,
+                                    target=fid,
+                                    type="calls",
+                                    summary=f"{caller_id.split(':')[-1]} calls {callee_name}.",
+                                    weight=0.8,
+                                )
+                            )
+
     def _add_go_symbols(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
         for match in GO_FUNCTION_RE.finditer(text):
             name = match.group("name")
+            line_no = self._line_of(text, match.start())
             node = GraphNode(
                 id=function_id(relative, name),
                 type="function",
@@ -138,6 +203,7 @@ class StructureScanner:
                 summary=f"Go function {name} in {relative}.",
                 tags=["go", "function"],
                 filePath=relative,
+                line_range=(line_no, line_no),
                 metadata={"language": "go"},
             )
             store.upsert_node(node)
@@ -154,6 +220,7 @@ class StructureScanner:
 
         for match in GO_TYPE_RE.finditer(text):
             name = match.group("name")
+            line_no = self._line_of(text, match.start())
             node = GraphNode(
                 id=f"class:{relative}:{name}",
                 type="class",
@@ -161,6 +228,7 @@ class StructureScanner:
                 summary=f"Go type {name} in {relative}.",
                 tags=["go", "type"],
                 filePath=relative,
+                line_range=(line_no, line_no),
                 metadata={"language": "go"},
             )
             store.upsert_node(node)
@@ -178,6 +246,7 @@ class StructureScanner:
     def _add_python_symbols(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
         for match in PYTHON_FUNCTION_RE.finditer(text):
             name = match.group("name")
+            line_no = self._line_of(text, match.start())
             node = GraphNode(
                 id=function_id(relative, name),
                 type="function",
@@ -185,6 +254,7 @@ class StructureScanner:
                 summary=f"Python function {name} in {relative}.",
                 tags=["python", "function"],
                 filePath=relative,
+                line_range=(line_no, line_no),
                 metadata={"language": "python"},
             )
             store.upsert_node(node)
@@ -201,6 +271,7 @@ class StructureScanner:
 
         for match in PYTHON_CLASS_RE.finditer(text):
             name = match.group("name")
+            line_no = self._line_of(text, match.start())
             node = GraphNode(
                 id=f"class:{relative}:{name}",
                 type="class",
@@ -208,6 +279,7 @@ class StructureScanner:
                 summary=f"Python class {name} in {relative}.",
                 tags=["python", "class"],
                 filePath=relative,
+                line_range=(line_no, line_no),
                 metadata={"language": "python"},
             )
             store.upsert_node(node)
@@ -300,6 +372,7 @@ class StructureScanner:
             name = match.group("name") or match.group("arrow_name")
             if not name:
                 continue
+            line_no = self._line_of(text, match.start())
             node = GraphNode(
                 id=function_id(relative, name),
                 type="function",
@@ -307,6 +380,7 @@ class StructureScanner:
                 summary=f"JavaScript/TypeScript function {name} in {relative}.",
                 tags=["javascript", "typescript", "function"],
                 filePath=relative,
+                line_range=(line_no, line_no),
                 metadata={"language": self._language_for(relative)},
             )
             store.upsert_node(node)
@@ -323,6 +397,7 @@ class StructureScanner:
 
         for match in TSJS_CLASS_RE.finditer(text):
             name = match.group("name")
+            line_no = self._line_of(text, match.start())
             node = GraphNode(
                 id=f"class:{relative}:{name}",
                 type="class",
@@ -330,6 +405,7 @@ class StructureScanner:
                 summary=f"JavaScript/TypeScript class {name} in {relative}.",
                 tags=["javascript", "typescript", "class"],
                 filePath=relative,
+                line_range=(line_no, line_no),
                 metadata={"language": self._language_for(relative)},
             )
             store.upsert_node(node)
@@ -424,16 +500,13 @@ class StructureScanner:
                 )
 
     def _file_summary(self, relative: str) -> str:
-        if relative.endswith(".go"):
-            return f"Go source file {relative}."
-        if relative.endswith((".py", ".pyw")):
-            return f"Python source file {relative}."
-        if relative.endswith((".ts", ".tsx")):
-            return f"TypeScript source file {relative}."
-        if relative.endswith((".js", ".jsx")):
-            return f"JavaScript source file {relative}."
-        if relative.lower().endswith((".md", ".txt")):
+        lang = self._language_for(relative)
+        if lang:
+            return f"{lang.capitalize()} source file {relative}."
+        if relative.lower().endswith((".md", ".txt", ".rst")):
             return f"Documentation file {relative}."
+        if relative.lower().endswith((".json", ".yaml", ".yml", ".toml")):
+            return f"Configuration file {relative}."
         return f"Repository file {relative}; detailed symbols unavailable."
 
 

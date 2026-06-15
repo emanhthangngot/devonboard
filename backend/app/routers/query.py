@@ -47,7 +47,13 @@ def post_query_stream(request: QueryRequest) -> StreamingResponse:
 
 
 def _load_graph():
-    settings = get_settings()
-    if not settings.devonboard_graph_path.exists():
-        raise HTTPException(status_code=404, detail="No graph found. Run scan to get started.")
-    return GraphStore.load(settings.devonboard_graph_path).graph
+    from backend.app.main import get_cached_graph, set_cached_graph
+    graph = get_cached_graph()
+    if graph is None:
+        settings = get_settings()
+        if not settings.devonboard_graph_path.exists():
+            raise HTTPException(status_code=404, detail="No graph found. Run scan to get started.")
+        graph = GraphStore.load(settings.devonboard_graph_path).graph
+        set_cached_graph(graph)
+    return graph
+
