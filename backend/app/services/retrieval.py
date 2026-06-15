@@ -90,6 +90,7 @@ class RetrievalService:
         # Build adjacency index for fast BFS traversal.
         self._adj: dict[str, list[GraphEdge]] = {}
         self._rev_adj: dict[str, list[GraphEdge]] = {}
+        self._nodes_by_id = {node.id: node for node in self.graph.nodes}
         for edge in self.graph.edges:
             self._adj.setdefault(edge.source, []).append(edge)
             self._rev_adj.setdefault(edge.target, []).append(edge)
@@ -314,11 +315,7 @@ Provide your answer in markdown:
             print(f"Gemini streaming request failed: {e}")
 
     def node_history(self, node_id: str) -> dict[str, object]:
-        source_ids = {
-            edge.source
-            for edge in self._rev_adj.get(node_id, [])
-            if edge.type in {"documents", "cites"}
-        }
+        source_ids = self._linked_source_ids(node_id)
         claim_ids = set()
         for sid in source_ids:
             for edge in self._adj.get(sid, []):
@@ -340,6 +337,22 @@ Provide your answer in markdown:
             "warnings": [] if evidence or claims else ["No linked commits/PRs found for this node."],
         }
 
+    def _linked_source_ids(self, node_id: str) -> set[str]:
+        source_ids: set[str] = set()
+        for edge in self._rev_adj.get(node_id, []):
+            if edge.type in {"documents", "cites"}:
+                source = self._nodes_by_id.get(edge.source)
+                if source and source.type == "source":
+                    source_ids.add(edge.source)
+
+        for edge in self._adj.get(node_id, []):
+            if edge.type != "cites":
+                continue
+            target = self._nodes_by_id.get(edge.target)
+            if target and target.type == "source":
+                source_ids.add(edge.target)
+        return source_ids
+
     # ------------------------------------------------------------------
     # Routing
     # ------------------------------------------------------------------
@@ -350,7 +363,12 @@ Provide your answer in markdown:
         lowered = query.lower()
         if any(token in lowered for token in ["refactor", "safe", "risk", "review", "context pack", "blast radius", "impact"]):
             return "hybrid"
-        if any(token in lowered for token in ["why", "rationale", "decision", "chosen", "who", "when was", "history", "alternative"]):
+        if any(token in lowered for token in [
+            "why", "rationale", "decision", "chosen", "who", "when was",
+            "history", "alternative", "pr #", "pull request", "commit",
+            "what was", "what changed", "before this fix", "before the fix",
+            "original",
+        ]):
             return "historical"
         return "structural"
 
@@ -505,10 +523,9 @@ Provide your answer in markdown:
         # Step 1: Find source nodes that document/cite the structural nodes.
         source_ids: set[str] = set()
         for sid in structural_ids:
-            for edge in self._rev_adj.get(sid, []):
-                if edge.type in {"documents", "cites"}:
-                    source_ids.add(edge.source)
-                    self._curr_historical_hops[edge.source] = 1
+            for source_id in self._linked_source_ids(sid):
+                source_ids.add(source_id)
+                self._curr_historical_hops[source_id] = 1
 
         # Step 2: Find claims that sources exemplify.
         claim_ids: set[str] = set()

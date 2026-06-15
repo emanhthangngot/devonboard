@@ -11,11 +11,13 @@ class GitHistoryIngestor:
         self.repo_path = repo_path.resolve()
         self.graph = graph
         self.max_commits = max_commits
+        self._nodes_by_id = {node.id: node for node in self.graph.nodes}
+        self._edges_by_id = {edge.id: edge for edge in self.graph.edges}
 
     def ingest(self) -> KnowledgeGraph:
         for sha in self._commit_shas():
             self._ingest_commit(sha)
-        
+
         # Enforce GITHUB_TOKEN enrichment for issues, PRs, and reviews if configured
         from backend.app.config import get_settings
         settings = get_settings()
@@ -26,7 +28,14 @@ class GitHistoryIngestor:
             except Exception as e:
                 print(f"Failed to enrich graph with GitHub metadata: {e}")
 
+        # Sync back helper maps before RationaleExtractor runs
+        self._nodes_by_id = {node.id: node for node in self.graph.nodes}
+        self._edges_by_id = {edge.id: edge for edge in self.graph.edges}
+
+        # Extract rationales from all sources
         RationaleExtractor(self.graph).extract()
+
+        # Final sort once at the end
         self.graph.nodes.sort(key=lambda node: node.id)
         self.graph.edges.sort(key=lambda edge: edge.id)
         return self.graph
@@ -118,23 +127,25 @@ class GitHistoryIngestor:
         return subprocess.check_output(["git", "-C", str(self.repo_path), *args], text=True)
 
     def _has_node(self, node_id: str) -> bool:
-        return any(node.id == node_id for node in self.graph.nodes)
+        return node_id in self._nodes_by_id
 
     def _upsert_node(self, node: GraphNode) -> None:
-        for index, existing in enumerate(self.graph.nodes):
-            if existing.id == node.id:
-                self.graph.nodes[index] = existing.model_copy(
-                    update={
-                        "name": node.name or existing.name,
-                        "summary": node.summary or existing.summary,
-                        "tags": sorted(set(existing.tags).union(node.tags)),
-                        "metadata": {**existing.metadata, **node.metadata},
-                    }
-                )
-                return
-        self.graph.nodes.append(node)
+        if node.id in self._nodes_by_id:
+            existing = self._nodes_by_id[node.id]
+            existing.name = node.name or existing.name
+            existing.summary = node.summary or existing.summary
+            existing.tags = sorted(set(existing.tags).union(node.tags))
+            existing.metadata = {**existing.metadata, **node.metadata}
+        else:
+            self._nodes_by_id[node.id] = node
+            self.graph.nodes.append(node)
 
     def _upsert_edge(self, edge: GraphEdge) -> None:
-        if any(existing.id == edge.id for existing in self.graph.edges):
-            return
-        self.graph.edges.append(edge)
+        if edge.id in self._edges_by_id:
+            existing = self._edges_by_id[edge.id]
+            existing.summary = edge.summary or existing.summary
+            existing.weight = max(existing.weight, edge.weight)
+            existing.metadata = {**existing.metadata, **edge.metadata}
+        else:
+            self._edges_by_id[edge.id] = edge
+            self.graph.edges.append(edge)

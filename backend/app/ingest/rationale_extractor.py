@@ -4,12 +4,16 @@ from backend.app.graph.ids import claim_id, edge_id
 from backend.app.graph.models import GraphEdge, GraphNode, KnowledgeGraph
 
 RATIONALE_PATTERNS = [
+    re.compile(r"\bfix\(security\)[:\s]+(?P<claim>.+)", re.IGNORECASE),
     re.compile(r"\bbecause\b(?P<claim>.+)", re.IGNORECASE),
     re.compile(r"\bso that\b(?P<claim>.+)", re.IGNORECASE),
     re.compile(r"\bin order to\b(?P<claim>.+)", re.IGNORECASE),
     re.compile(r"\btradeoff\b[:\-]?(?P<claim>.+)", re.IGNORECASE),
     re.compile(r"\brisk\b[:\-]?(?P<claim>.+)", re.IGNORECASE),
     re.compile(r"\bmigration\b[:\-]?(?P<claim>.+)", re.IGNORECASE),
+    re.compile(r"\b(auth bypass|permission bypass|rbac|default.permit)\b(?P<claim>.{10,})", re.IGNORECASE),
+    re.compile(r"\b(closes?|fixes?)\s+#\d+[:\s](?P<claim>.+)", re.IGNORECASE),
+    re.compile(r"\b(deprecated?|removed?|replaced?)\b[:\s]?(?P<claim>.{10,})", re.IGNORECASE),
 ]
 
 
@@ -67,6 +71,9 @@ class RationaleExtractor:
             tags.append("performance")
         if "security" in lowered:
             tags.append("security")
+        if any(token in lowered for token in ["auth bypass", "permission bypass", "rbac", "default-permit", "default permit"]):
+            tags.extend(["security", "risk"])
+        tags = sorted(set(tags))
         return tags
 
     def _upsert_claim(self, claim: GraphNode, source_id: str) -> None:
