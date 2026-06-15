@@ -60,6 +60,9 @@ type JobStatus = {
   error?: string | null;
 };
 
+const jobPollIntervalMs = process.env.NODE_ENV === "test" ? 0 : 1000;
+const jobPollTimeoutMs = 120_000;
+
 type NodeHistory = {
   evidence: Evidence[];
   claims: Evidence[];
@@ -235,6 +238,10 @@ export default function Home() {
         body: JSON.stringify({ repo_path: activePath, branch, commit, exclude_patterns: [] }),
       });
       setScanStatus(payload);
+      const finalStatus = await pollJobStatus("/scan/status", setScanStatus);
+      if (finalStatus.status === "error") {
+        throw new Error(finalStatus.error || "Scan failed.");
+      }
       await loadGraph();
     } catch (error) {
       const message = errorMessage(error, "Scan failed.");
@@ -1436,6 +1443,30 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
     throw new Error(message);
   }
   return payload as T;
+}
+
+async function pollJobStatus(
+  path: string,
+  onStatus: (status: JobStatus) => void,
+): Promise<JobStatus> {
+  const deadline = Date.now() + jobPollTimeoutMs;
+
+  while (Date.now() < deadline) {
+    const status = await requestJson<JobStatus>(path);
+    onStatus(status);
+
+    if (status.status === "done" || status.status === "error") {
+      return status;
+    }
+
+    await wait(jobPollIntervalMs);
+  }
+
+  throw new Error("Scan timed out while waiting for backend status.");
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function errorMessage(error: unknown, fallback: string) {
