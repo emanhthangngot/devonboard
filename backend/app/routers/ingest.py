@@ -5,6 +5,7 @@ from backend.app.config import get_settings
 from backend.app.graph.graph_store import GraphStore
 from backend.app.ingest.git_extractor import GitHistoryIngestor
 from backend.app.services.repo_resolver import resolve_repository_input
+from backend.app.services.vector_index import VectorIndexService
 
 router = APIRouter()
 
@@ -63,6 +64,7 @@ def _run_ingest_history(request: IngestHistoryRequest) -> None:
             repo_path=resolved.path,
             graph=store.graph,
             max_commits=request.max_commits,
+            include_pr_comments=request.include_pr_comments,
         ).ingest()
         graph.repo.path = str(resolved.path)
         graph.repo.url = resolved.url or graph.repo.url
@@ -70,14 +72,30 @@ def _run_ingest_history(request: IngestHistoryRequest) -> None:
         graph.repo.commit = resolved.commit
         store.graph = graph
         store.save()
+        vector_result = {"skipped": True, "reason": "vector index not configured"}
+        vector_service = VectorIndexService.from_settings()
+        if vector_service is not None:
+            _ingest_status.update(
+                {
+                    "status": "running",
+                    "progress": 85,
+                    "message": "Rebuilding vector index",
+                    "error": None,
+                }
+            )
+            try:
+                vector_result = vector_service.rebuild(graph)
+            except Exception as exc:
+                vector_result = {"skipped": True, "error": str(exc)}
         set_cached_graph(graph)
         _ingest_status.update(
             {
                 "status": "done",
                 "progress": 100,
                 "message": f"Ingested up to {request.max_commits} commits.",
-                "warnings": [],
+                "warnings": [] if not vector_result.get("error") else [str(vector_result["error"])],
                 "error": None,
+                "vector_index": vector_result,
                 "resolved_repo_path": str(resolved.path),
                 "repo_url": resolved.url,
                 "repo_name": resolved.name,

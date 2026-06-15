@@ -7,16 +7,23 @@ from backend.app.ingest.rationale_extractor import RationaleExtractor
 
 
 class GitHistoryIngestor:
-    def __init__(self, repo_path: Path, graph: KnowledgeGraph, max_commits: int) -> None:
+    def __init__(
+        self,
+        repo_path: Path,
+        graph: KnowledgeGraph,
+        max_commits: int,
+        include_pr_comments: bool = True,
+    ) -> None:
         self.repo_path = repo_path.resolve()
         self.graph = graph
         self.max_commits = max_commits
+        self.include_pr_comments = include_pr_comments
         self._nodes_by_id = {node.id: node for node in self.graph.nodes}
         self._edges_by_id = {edge.id: edge for edge in self.graph.edges}
 
     def ingest(self) -> KnowledgeGraph:
-        for sha in self._commit_shas():
-            self._ingest_commit(sha)
+        for record in self._commit_records():
+            self._ingest_commit_record(record)
 
         # Enforce GITHUB_TOKEN enrichment for issues, PRs, and reviews if configured
         from backend.app.config import get_settings
@@ -24,7 +31,11 @@ class GitHistoryIngestor:
         if settings.github_token:
             try:
                 from backend.app.ingest.github_fetcher import GitHubFetcher
-                GitHubFetcher(self.graph, settings.github_token).enrich()
+                GitHubFetcher(
+                    self.graph,
+                    settings.github_token,
+                    include_reviews=self.include_pr_comments,
+                ).enrich()
             except Exception as e:
                 print(f"Failed to enrich graph with GitHub metadata: {e}")
 
@@ -40,18 +51,40 @@ class GitHistoryIngestor:
         self.graph.edges.sort(key=lambda edge: edge.id)
         return self.graph
 
+    def _commit_records(self) -> list[dict[str, object]]:
+        return [
+            {
+                "sha": sha,
+                "metadata": self._commit_metadata(sha),
+                "files_touched": self._files_touched(sha),
+            }
+            for sha in self._commit_shas()
+        ]
+
     def _commit_shas(self) -> list[str]:
         output = self._git("rev-list", f"--max-count={self.max_commits}", "HEAD")
         return [line.strip() for line in output.splitlines() if line.strip()]
 
     def _ingest_commit(self, sha: str) -> None:
-        metadata = self._commit_metadata(sha)
-        files_touched = self._files_touched(sha)
+        self._ingest_commit_record(
+            {
+                "sha": sha,
+                "metadata": self._commit_metadata(sha),
+                "files_touched": self._files_touched(sha),
+            }
+        )
+
+    def _ingest_commit_record(self, record: dict[str, object]) -> None:
+        sha = str(record["sha"])
+        metadata = record["metadata"]
+        files_touched = [str(path) for path in record["files_touched"]]
+        if not isinstance(metadata, dict):
+            return
         source = GraphNode(
             id=source_commit_id(sha),
             type="source",
-            name=metadata["subject"],
-            summary=metadata["body"] or metadata["subject"],
+            name=str(metadata["subject"]),
+            summary=str(metadata["body"] or metadata["subject"]),
             tags=["git", "commit"],
             metadata={
                 "kind": "commit",
@@ -65,9 +98,9 @@ class GitHistoryIngestor:
         self._upsert_node(source)
 
         author = GraphNode(
-            id=entity_id("git", metadata["email"] or metadata["author"]),
+            id=entity_id("git", str(metadata["email"] or metadata["author"])),
             type="entity",
-            name=metadata["author"],
+            name=str(metadata["author"]),
             summary=f"Git author {metadata['author']}.",
             tags=["author", "git"],
             metadata={"email": metadata["email"]},

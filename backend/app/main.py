@@ -10,6 +10,7 @@ from backend.app.routers.ingest import router as ingest_router
 from backend.app.routers.query import router as query_router
 from backend.app.routers.results import router as results_router
 from backend.app.routers.scan import router as scan_router
+from backend.app.services.vector_index import VectorIndexService
 
 _graph_cache: KnowledgeGraph | None = None
 
@@ -67,13 +68,27 @@ def health() -> dict[str, object]:
             graph_repo = graph.repo.model_dump()
         except Exception:
             graph_repo = None
+    vector_service = VectorIndexService.from_settings()
+    qdrant_status = (
+        vector_service.status()
+        if vector_service is not None
+        else {
+            "configured": bool(settings.qdrant_url),
+            "integrated": True,
+            "reachable": False,
+            "url": settings.qdrant_url if settings.qdrant_url else None,
+            "collection": settings.qdrant_collection,
+            "reason": "Qdrant URL or Gemini API key is not configured.",
+        }
+    )
     return {
         "status": "ok",
         "graph_exists": settings.devonboard_graph_path.exists(),
-        "qdrant": {
-            "configured": bool(settings.qdrant_url),
-            "integrated": False,  # Qdrant vector search not yet implemented; graph-first retrieval is active
-            "url": settings.qdrant_url if settings.qdrant_url else None,
+        "qdrant": qdrant_status,
+        "embedding": {
+            "model": settings.embedding_model,
+            "dimensions": settings.embedding_dimensions,
+            "batch_size": settings.embedding_batch_size,
         },
         "llm_available": bool(settings.gemini_api_key),
         "target_repo": {
@@ -83,4 +98,3 @@ def health() -> dict[str, object]:
         },
         "graph_repo": graph_repo,
     }
-

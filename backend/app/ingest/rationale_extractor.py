@@ -15,6 +15,8 @@ RATIONALE_PATTERNS = [
     re.compile(r"\b(closes?|fixes?)\s+#\d+[:\s](?P<claim>.+)", re.IGNORECASE),
     re.compile(r"\b(deprecated?|removed?|replaced?)\b[:\s]?(?P<claim>.{10,})", re.IGNORECASE),
 ]
+MAX_CLAIM_CHARS = 500
+MAX_PATTERN_WINDOW = 1200
 
 
 class RationaleExtractor:
@@ -41,19 +43,33 @@ class RationaleExtractor:
                 },
             )
             self._upsert_claim(claim, source.id)
+        self.graph.nodes.sort(key=lambda node: node.id)
+        self.graph.edges.sort(key=lambda edge: edge.id)
         return self.graph
 
     def _extract_claim_text(self, text: str) -> str | None:
         compact = " ".join(text.split())
+        if not compact:
+            return None
         for pattern in RATIONALE_PATTERNS:
-            match = pattern.search(compact)
+            match = pattern.search(compact[:MAX_PATTERN_WINDOW])
             if not match:
                 continue
             claim = match.group("claim").strip(" .:-")
+            claim = self._bound_claim(claim)
             if len(claim) < 12:
                 return None
             return claim[0].upper() + claim[1:] + "."
         return None
+
+    def _bound_claim(self, claim: str) -> str:
+        claim = re.split(r"(?:\s+-\s+|\s+\*\s+|\s+Co-Authored-By:|\s+Verification:)", claim, maxsplit=1)[0]
+        sentence_match = re.match(r"(.+?[.!?])(?:\s|$)", claim)
+        if sentence_match and len(sentence_match.group(1)) >= 12:
+            claim = sentence_match.group(1)
+        if len(claim) > MAX_CLAIM_CHARS:
+            claim = claim[:MAX_CLAIM_CHARS].rsplit(" ", 1)[0]
+        return claim.strip(" .:-")
 
     def _claim_name(self, claim_text: str) -> str:
         return claim_text[:80].rstrip(".")
@@ -89,5 +105,3 @@ class RationaleExtractor:
         )
         if not any(existing.id == edge.id for existing in self.graph.edges):
             self.graph.edges.append(edge)
-        self.graph.nodes.sort(key=lambda node: node.id)
-        self.graph.edges.sort(key=lambda edge: edge.id)

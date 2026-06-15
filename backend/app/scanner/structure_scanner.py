@@ -1,7 +1,9 @@
 import fnmatch
 import re
+from collections import defaultdict
 from pathlib import Path
 
+from backend.app.config import get_settings
 from backend.app.graph.graph_store import GraphStore
 from backend.app.graph.ids import edge_id, file_id, function_id, module_id, normalize_repo_path
 from backend.app.graph.models import GraphEdge, GraphNode, KnowledgeGraph, RepoMeta
@@ -15,6 +17,24 @@ GO_CALL_RE = re.compile(
     r"\b(?P<func>[A-Z][A-Za-z0-9]*)\s*\(",                                          # ExportedFunc(
     re.MULTILINE,
 )
+NOISY_GO_CALL_NAMES = {
+    "Close",
+    "Create",
+    "Delete",
+    "Error",
+    "Execute",
+    "Get",
+    "List",
+    "Name",
+    "New",
+    "Run",
+    "Scan",
+    "Set",
+    "Start",
+    "Stop",
+    "String",
+    "Update",
+}
 
 PYTHON_FUNCTION_RE = re.compile(r"^[ \t]*def\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*\(", re.MULTILINE)
 PYTHON_CLASS_RE = re.compile(r"^[ \t]*class\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*[:\(]", re.MULTILINE)
@@ -31,6 +51,8 @@ TSJS_CLASS_RE = re.compile(
     re.MULTILINE
 )
 TSJS_IMPORT_RE = re.compile(r"^[ \t]*import\s+(?:.*\s+from\s+)?['\"](?P<path>[^'\"]+)['\"]", re.MULTILINE)
+DOCUMENT_EXTENSIONS = (".md", ".mdx", ".txt", ".rst")
+DOCUMENT_SNIPPET_LIMIT = 2400
 
 
 class StructureScanner:
@@ -48,6 +70,9 @@ class StructureScanner:
         self.exclude_patterns = exclude_patterns
         self.repo_url = repo_url
         self.go_module = self._read_go_module()
+        settings = get_settings()
+        self.call_graph_mode = settings.scan_call_graph_mode.lower()
+        self.include_test_calls = settings.scan_include_test_calls
 
     def scan(self) -> KnowledgeGraph:
         if not self.repo_path.exists() or not self.repo_path.is_dir():
@@ -64,13 +89,19 @@ class StructureScanner:
             ),
         )
 
+        go_files: list[tuple[Path, str, str]] = []
         for path in sorted(self.repo_path.rglob("*")):
             if not path.is_file():
                 continue
             relative = normalize_repo_path(str(path.relative_to(self.repo_path)))
             if self._is_excluded(relative):
                 continue
-            self._add_file(store, path, relative)
+            text = self._add_file(store, path, relative)
+            if text is not None and relative.endswith(".go"):
+                go_files.append((path, relative, text))
+
+        if self.call_graph_mode != "off":
+            self._add_go_call_graph(store, go_files)
 
         return store.graph
 
@@ -82,32 +113,42 @@ class StructureScanner:
             for pattern in self.exclude_patterns
         )
 
-    def _add_file(self, store: GraphStore, path: Path, relative: str) -> None:
+    def _add_file(self, store: GraphStore, path: Path, relative: str) -> str | None:
+        text_for_metadata = self._read_indexable_text(path, relative)
+        metadata = {"language": self._language_for(relative)}
+        if text_for_metadata and self._is_document(relative):
+            metadata.update(
+                {
+                    "document_snippet": self._document_snippet(text_for_metadata),
+                    "evidence_type": "doc",
+                }
+            )
         file_node = GraphNode(
             id=file_id(relative),
             type="file",
             name=Path(relative).name,
-            summary=self._file_summary(relative),
+            summary=self._file_summary(relative, text_for_metadata),
             tags=self._file_tags(relative),
             filePath=relative,
-            metadata={"language": self._language_for(relative)},
+            metadata=metadata,
         )
         store.upsert_node(file_node)
         self._add_modules(store, relative, file_node.id)
 
         if relative.endswith(".go"):
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = text_for_metadata or path.read_text(encoding="utf-8", errors="ignore")
             self._add_go_symbols(store, relative, text, file_node.id)
             self._add_go_import_edges(store, relative, text, file_node.id)
-            self._add_go_call_edges(store, relative, text, file_node.id)
+            return text
         elif relative.endswith((".py", ".pyw")):
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = text_for_metadata or path.read_text(encoding="utf-8", errors="ignore")
             self._add_python_symbols(store, relative, text, file_node.id)
             self._add_python_import_edges(store, relative, text, file_node.id)
         elif relative.endswith((".ts", ".tsx", ".js", ".jsx")):
-            text = path.read_text(encoding="utf-8", errors="ignore")
+            text = text_for_metadata or path.read_text(encoding="utf-8", errors="ignore")
             self._add_tsjs_symbols(store, relative, text, file_node.id)
             self._add_tsjs_import_edges(store, relative, text, file_node.id)
+        return None
 
     def _add_modules(self, store: GraphStore, relative: str, child_id: str) -> None:
         parent = Path(relative).parent
@@ -138,8 +179,36 @@ class StructureScanner:
         """Return 1-indexed line number for a match position in text."""
         return text[:match_start].count("\n") + 1
 
+    def _add_go_call_graph(self, store: GraphStore, go_files: list[tuple[Path, str, str]]) -> None:
+        functions_by_file: dict[str, set[str]] = defaultdict(set)
+        functions_by_package: dict[str, dict[str, set[str]]] = defaultdict(lambda: defaultdict(set))
+        for _, relative, text in go_files:
+            package_path = self._go_package_path(relative)
+            for match in GO_FUNCTION_RE.finditer(text):
+                name = match.group("name")
+                fid = function_id(relative, name)
+                functions_by_file[relative].add(fid)
+                functions_by_package[package_path][name].add(fid)
+
+        for _, relative, text in go_files:
+            if not self.include_test_calls and self._is_test_file(relative):
+                continue
+            self._add_go_call_edges(
+                store,
+                relative,
+                text,
+                functions_by_file=functions_by_file,
+                functions_by_package=functions_by_package,
+            )
+
     def _add_go_call_edges(
-        self, store: GraphStore, relative: str, text: str, file_node_id: str
+        self,
+        store: GraphStore,
+        relative: str,
+        text: str,
+        *,
+        functions_by_file: dict[str, set[str]],
+        functions_by_package: dict[str, dict[str, set[str]]],
     ) -> None:
         """
         Create approximate `calls` edges between functions in the same file
@@ -147,9 +216,8 @@ class StructureScanner:
         Only links calls where the callee already exists as a graph node —
         avoids creating dangling references to stdlib or vendor functions.
         """
-        existing_function_ids = {
-            node.id for node in store.graph.nodes if node.type == "function"
-        }
+        same_file_functions = functions_by_file.get(relative, set())
+        same_package_functions = functions_by_package.get(self._go_package_path(relative), {})
         # Find all function definitions in this file to use as callers
         caller_ranges: list[tuple[str, int, int]] = []
         lines = text.splitlines()
@@ -176,21 +244,58 @@ class StructureScanner:
                 callee_name = m.group("method") or m.group("func")
                 if not callee_name:
                     continue
-                # Try to find a matching function node anywhere in the graph
-                for fid in existing_function_ids:
-                    if fid.endswith(f":{callee_name}") and fid != caller_id:
-                        if fid not in seen_callees:
-                            seen_callees.add(fid)
-                            store.upsert_edge(
-                                GraphEdge(
-                                    id=edge_id(caller_id, fid, "calls"),
-                                    source=caller_id,
-                                    target=fid,
-                                    type="calls",
-                                    summary=f"{caller_id.split(':')[-1]} calls {callee_name}.",
-                                    weight=0.8,
-                                )
-                            )
+                target_id = self._resolve_go_callee(
+                    callee_name,
+                    caller_id,
+                    same_file_functions,
+                    same_package_functions,
+                )
+                if not target_id or target_id in seen_callees:
+                    continue
+                seen_callees.add(target_id)
+                store.upsert_edge(
+                    GraphEdge(
+                        id=edge_id(caller_id, target_id, "calls"),
+                        source=caller_id,
+                        target=target_id,
+                        type="calls",
+                        summary=f"{caller_id.split(':')[-1]} calls {callee_name}.",
+                        weight=0.8,
+                    )
+                )
+
+    def _resolve_go_callee(
+        self,
+        callee_name: str,
+        caller_id: str,
+        same_file_functions: set[str],
+        same_package_functions: dict[str, set[str]],
+    ) -> str | None:
+        same_file_target = next(
+            (
+                fid
+                for fid in same_file_functions
+                if fid.endswith(f":{callee_name}") and fid != caller_id
+            ),
+            None,
+        )
+        if same_file_target:
+            return same_file_target
+        if self.call_graph_mode != "package" or callee_name in NOISY_GO_CALL_NAMES:
+            return None
+        package_targets = {
+            fid for fid in same_package_functions.get(callee_name, set()) if fid != caller_id
+        }
+        if len(package_targets) == 1:
+            return next(iter(package_targets))
+        return None
+
+    def _go_package_path(self, relative: str) -> str:
+        parent = Path(relative).parent
+        return "" if str(parent) == "." else normalize_repo_path(str(parent))
+
+    def _is_test_file(self, relative: str) -> bool:
+        return relative.endswith("_test.go") or relative.startswith("tests/")
 
     def _add_go_symbols(self, store: GraphStore, relative: str, text: str, file_node_id: str) -> None:
         for match in GO_FUNCTION_RE.finditer(text):
@@ -499,15 +604,49 @@ class StructureScanner:
                     )
                 )
 
-    def _file_summary(self, relative: str) -> str:
+    def _file_summary(self, relative: str, text: str | None = None) -> str:
+        if self._is_document(relative):
+            heading = self._first_heading(text or "")
+            if heading:
+                return f"Documentation file {relative}: {heading}."
+            return f"Documentation file {relative}."
         lang = self._language_for(relative)
         if lang:
             return f"{lang.capitalize()} source file {relative}."
-        if relative.lower().endswith((".md", ".txt", ".rst")):
-            return f"Documentation file {relative}."
         if relative.lower().endswith((".json", ".yaml", ".yml", ".toml")):
             return f"Configuration file {relative}."
         return f"Repository file {relative}; detailed symbols unavailable."
+
+    def _is_document(self, relative: str) -> bool:
+        return relative.lower().endswith(DOCUMENT_EXTENSIONS)
+
+    def _read_indexable_text(self, path: Path, relative: str) -> str | None:
+        if relative.endswith((".go", ".py", ".pyw", ".ts", ".tsx", ".js", ".jsx")) or self._is_document(relative):
+            return path.read_text(encoding="utf-8", errors="ignore")
+        return None
+
+    def _first_heading(self, text: str) -> str | None:
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("#"):
+                return stripped.lstrip("#").strip()[:160]
+            return stripped[:160]
+        return None
+
+    def _document_snippet(self, text: str) -> str:
+        lines = []
+        for line in text.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            if stripped.startswith("<!--"):
+                continue
+            lines.append(stripped)
+            if sum(len(item) for item in lines) >= DOCUMENT_SNIPPET_LIMIT:
+                break
+        return " ".join(lines)[:DOCUMENT_SNIPPET_LIMIT]
 
 
     def _file_tags(self, relative: str) -> list[str]:
@@ -515,6 +654,8 @@ class StructureScanner:
         language = self._language_for(relative)
         if language:
             tags.append(language)
+        if self._is_document(relative):
+            tags.extend(["doc", "markdown" if relative.lower().endswith((".md", ".mdx")) else "text"])
         return tags
 
     def _language_for(self, relative: str) -> str | None:

@@ -52,6 +52,20 @@ type HealthStatus = {
   graph_repo?: { name: string; path?: string; branch: string; commit?: string | null } | null;
 };
 
+type GraphSummary = {
+  version: string;
+  generated_at: string;
+  repo: KnowledgeGraph["repo"];
+  total_nodes: number;
+  total_edges: number;
+};
+
+type GraphNodesResponse = {
+  nodes: GraphNode[];
+  next_cursor: number | null;
+  total: number;
+};
+
 type JobStatus = {
   status: string;
   progress?: number;
@@ -202,7 +216,7 @@ export default function Home() {
 
   async function loadGraph() {
     try {
-      const payload = await requestJson<KnowledgeGraph>("/graph");
+      const payload = await loadNavigationGraph();
       if (!isMounted.current) return;
       setGraph(payload);
       setRepoPath((current) => current || payload.repo?.path || defaultRepoPath);
@@ -266,11 +280,42 @@ export default function Home() {
         body: JSON.stringify({ repo_path: activePath, branch, commit, max_commits: 500 }),
       });
       setIngestStatus(payload);
+      const finalStatus = await pollJobStatus("/ingest/history/status", setIngestStatus);
+      if (finalStatus.status === "error") {
+        throw new Error(finalStatus.error || "History ingest failed.");
+      }
       await loadGraph();
     } catch (error) {
       const message = errorMessage(error, "History ingest failed.");
       setIngestStatus({ status: "error", progress: 0, error: message });
       setBanner({ tone: "error", message });
+    }
+  }
+
+  async function loadNavigationGraph(): Promise<KnowledgeGraph> {
+    try {
+      const summary = await requestJson<GraphSummary>("/graph/summary");
+      if (!summary?.repo || typeof summary.version !== "string") {
+        throw new Error("Graph summary unavailable.");
+      }
+      const [claims, files, members] = await Promise.all([
+        requestJson<GraphNodesResponse>("/graph/nodes?type=claim,topic&limit=500"),
+        requestJson<GraphNodesResponse>("/graph/nodes?type=file,module,config&limit=1000"),
+        requestJson<GraphNodesResponse>("/graph/nodes?type=function,class,service,endpoint,domain,flow,step&limit=50"),
+      ]);
+      const nodesById = new Map<string, GraphNode>();
+      for (const node of [...(claims.nodes || []), ...(files.nodes || []), ...(members.nodes || [])]) {
+        nodesById.set(node.id, node);
+      }
+      return {
+        version: summary.version,
+        generated_at: summary.generated_at,
+        repo: summary.repo,
+        nodes: [...nodesById.values()],
+        edges: [],
+      };
+    } catch {
+      return requestJson<KnowledgeGraph>("/graph");
     }
   }
 
@@ -319,7 +364,7 @@ export default function Home() {
         body: JSON.stringify({
           query: activeQuery,
           mode,
-          node_ids: selectedNode ? [selectedNode.id] : [],
+          node_ids: [],
           allow_external_llm_for_private_repo: true,
         }),
       });

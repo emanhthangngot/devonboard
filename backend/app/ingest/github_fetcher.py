@@ -10,9 +10,10 @@ GITHUB_MAX_PAGES = 10
 
 
 class GitHubFetcher:
-    def __init__(self, graph: KnowledgeGraph, token: str) -> None:
+    def __init__(self, graph: KnowledgeGraph, token: str, include_reviews: bool = True) -> None:
         self.graph = graph
         self.token = token
+        self.include_reviews = include_reviews
         self.headers = {
             "Authorization": f"token {self.token}",
             "User-Agent": "DevOnboard-App",
@@ -165,8 +166,9 @@ class GitHubFetcher:
                 )
             )
 
-        for review in self._get_paginated(f"/repos/{owner}/{repo}/pulls/{number}/reviews"):
-            self._ingest_review(pr_node_id, number, review)
+        if self.include_reviews:
+            for review in self._get_paginated(f"/repos/{owner}/{repo}/pulls/{number}/reviews"):
+                self._ingest_review(pr_node_id, number, review)
 
     def _ingest_review(self, pr_node_id: str, pr_number: int, review: dict) -> None:
         rid = review.get("id")
