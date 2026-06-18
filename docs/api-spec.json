@@ -165,6 +165,83 @@
         }
       }
     },
+    "/graph/summary": {
+      "get": {
+        "summary": "Get lightweight knowledge graph counts and repository metadata",
+        "operationId": "getGraphSummary",
+        "responses": {
+          "200": {
+            "description": "Knowledge graph summary",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphSummary"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/APIError"
+          }
+        }
+      }
+    },
+    "/graph/nodes": {
+      "get": {
+        "summary": "List graph nodes without returning the full graph edge set",
+        "operationId": "getGraphNodes",
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000,
+              "default": 200
+            }
+          },
+          {
+            "name": "cursor",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paged graph nodes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphNodesResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/APIError"
+          }
+        }
+      }
+    },
     "/graph/node/{id}/history": {
       "get": {
         "summary": "Get History/Why evidence for a graph node",
@@ -592,6 +669,59 @@
           }
         }
       },
+      "GraphSummary": {
+        "type": "object",
+        "required": ["version", "generated_at", "repo", "node_counts", "edge_counts", "total_nodes", "total_edges"],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "repo": {
+            "type": "object"
+          },
+          "node_counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "edge_counts": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "integer"
+            }
+          },
+          "total_nodes": {
+            "type": "integer"
+          },
+          "total_edges": {
+            "type": "integer"
+          }
+        }
+      },
+      "GraphNodesResponse": {
+        "type": "object",
+        "required": ["nodes", "next_cursor", "total"],
+        "properties": {
+          "nodes": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "next_cursor": {
+            "type": "integer",
+            "nullable": true
+          },
+          "total": {
+            "type": "integer"
+          }
+        }
+      },
       "ResultRunSummary": {
         "type": "object",
         "required": ["run_id", "created_at"],
@@ -780,7 +910,7 @@
             "type": "integer"
           },
           "warnings_count": {
-            "type": "integer",
+            "type": "integer"
           },
           "evidence_usefulness_score": {
             "type": "integer",

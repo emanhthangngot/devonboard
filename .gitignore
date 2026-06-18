@@ -17,5 +17,5 @@ out/
 coverage/
 playwright-report/
 test-results/
-backend/tests/
 frontend/test/
+backend/tests/

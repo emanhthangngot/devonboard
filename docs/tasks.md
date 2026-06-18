@@ -45,7 +45,7 @@
 ## Phase 4 — History Ingest
 
 - [x] Extract commit metadata and touched files.
-- [ ] Fetch PR/issue/review metadata.
+- [x] Fetch PR/issue/review metadata.
 - [x] Create source/entity nodes.
 - [x] Link sources to files/functions/modules.
 
@@ -88,5 +88,5 @@
 - [x] Next.js frontend provides a Claude-style workspace, architecture map, and result dashboard.
 - [x] E2E smoke covers scan, history ingest, cited query, evidence pack, and app results.
 - [x] Repo context from the frontend is honored by both scan and history ingest.
-- [ ] GitHub PR, issue, and review metadata enrichment remains a follow-up beyond local Git history ingest.
+- [x] GitHub PR, issue, and review metadata enrichment links files to PRs and reviews/issues when `GITHUB_TOKEN` is configured.
 - [ ] Full documentation rewrite in Phase 1 remains a separate content pass.

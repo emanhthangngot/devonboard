@@ -32,6 +32,10 @@ TARGET_REPO_BRANCH=dev
 TARGET_REPO_COMMIT=<pin-for-demo>
 MAX_COMMITS_INGEST=500
 ALLOW_EXTERNAL_LLM_FOR_PRIVATE_REPO=false
+QDRANT_URL=http://localhost:6333
+QDRANT_COLLECTION=goclaw_history
+SCAN_CALL_GRAPH_MODE=local
+SCAN_INCLUDE_TEST_CALLS=false
 ```
 
 Clone target repo:
@@ -46,6 +50,12 @@ git clone https://github.com/nextlevelbuilder/goclaw target_repo
 
 ```bash
 make up
+```
+
+To enable Qdrant locally:
+
+```bash
+docker compose --profile qdrant up --build
 ```
 
 Open:
@@ -114,3 +124,5 @@ benchmark/results/<timestamp>.json
 | LLM unavailable | inspect retrieved evidence directly |
 | Private repo with external LLM disabled | use evidence-only context and citations |
 | Generated/vendor files skipped | review `EXCLUDE_PATTERNS` before scan |
+| Scan is slow or graph is huge | keep `SCAN_CALL_GRAPH_MODE=local` and `SCAN_INCLUDE_TEST_CALLS=false` |
+| Qdrant unavailable | graph-only retrieval continues; check `/health` for Qdrant status |

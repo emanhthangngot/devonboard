@@ -7,42 +7,84 @@ from backend.app.ingest.rationale_extractor import RationaleExtractor
 
 
 class GitHistoryIngestor:
-    def __init__(self, repo_path: Path, graph: KnowledgeGraph, max_commits: int) -> None:
+    def __init__(
+        self,
+        repo_path: Path,
+        graph: KnowledgeGraph,
+        max_commits: int,
+        include_pr_comments: bool = True,
+    ) -> None:
         self.repo_path = repo_path.resolve()
         self.graph = graph
         self.max_commits = max_commits
+        self.include_pr_comments = include_pr_comments
+        self._nodes_by_id = {node.id: node for node in self.graph.nodes}
+        self._edges_by_id = {edge.id: edge for edge in self.graph.edges}
 
     def ingest(self) -> KnowledgeGraph:
-        for sha in self._commit_shas():
-            self._ingest_commit(sha)
-        
+        for record in self._commit_records():
+            self._ingest_commit_record(record)
+
         # Enforce GITHUB_TOKEN enrichment for issues, PRs, and reviews if configured
         from backend.app.config import get_settings
         settings = get_settings()
         if settings.github_token:
             try:
                 from backend.app.ingest.github_fetcher import GitHubFetcher
-                GitHubFetcher(self.graph, settings.github_token).enrich()
+                GitHubFetcher(
+                    self.graph,
+                    settings.github_token,
+                    include_reviews=self.include_pr_comments,
+                ).enrich()
             except Exception as e:
                 print(f"Failed to enrich graph with GitHub metadata: {e}")
 
+        # Sync back helper maps before RationaleExtractor runs
+        self._nodes_by_id = {node.id: node for node in self.graph.nodes}
+        self._edges_by_id = {edge.id: edge for edge in self.graph.edges}
+
+        # Extract rationales from all sources
         RationaleExtractor(self.graph).extract()
+
+        # Final sort once at the end
         self.graph.nodes.sort(key=lambda node: node.id)
         self.graph.edges.sort(key=lambda edge: edge.id)
         return self.graph
+
+    def _commit_records(self) -> list[dict[str, object]]:
+        return [
+            {
+                "sha": sha,
+                "metadata": self._commit_metadata(sha),
+                "files_touched": self._files_touched(sha),
+            }
+            for sha in self._commit_shas()
+        ]
 
     def _commit_shas(self) -> list[str]:
         output = self._git("rev-list", f"--max-count={self.max_commits}", "HEAD")
         return [line.strip() for line in output.splitlines() if line.strip()]
 
     def _ingest_commit(self, sha: str) -> None:
-        metadata = self._commit_metadata(sha)
-        files_touched = self._files_touched(sha)
+        self._ingest_commit_record(
+            {
+                "sha": sha,
+                "metadata": self._commit_metadata(sha),
+                "files_touched": self._files_touched(sha),
+            }
+        )
+
+    def _ingest_commit_record(self, record: dict[str, object]) -> None:
+        sha = str(record["sha"])
+        metadata = record["metadata"]
+        files_touched = [str(path) for path in record["files_touched"]]
+        if not isinstance(metadata, dict):
+            return
         source = GraphNode(
             id=source_commit_id(sha),
             type="source",
-            name=metadata["subject"],
-            summary=metadata["body"] or metadata["subject"],
+            name=str(metadata["subject"]),
+            summary=str(metadata["body"] or metadata["subject"]),
             tags=["git", "commit"],
             metadata={
                 "kind": "commit",
@@ -56,9 +98,9 @@ class GitHistoryIngestor:
         self._upsert_node(source)
 
         author = GraphNode(
-            id=entity_id("git", metadata["email"] or metadata["author"]),
+            id=entity_id("git", str(metadata["email"] or metadata["author"])),
             type="entity",
-            name=metadata["author"],
+            name=str(metadata["author"]),
             summary=f"Git author {metadata['author']}.",
             tags=["author", "git"],
             metadata={"email": metadata["email"]},
@@ -118,23 +160,25 @@ class GitHistoryIngestor:
         return subprocess.check_output(["git", "-C", str(self.repo_path), *args], text=True)
 
     def _has_node(self, node_id: str) -> bool:
-        return any(node.id == node_id for node in self.graph.nodes)
+        return node_id in self._nodes_by_id
 
     def _upsert_node(self, node: GraphNode) -> None:
-        for index, existing in enumerate(self.graph.nodes):
-            if existing.id == node.id:
-                self.graph.nodes[index] = existing.model_copy(
-                    update={
-                        "name": node.name or existing.name,
-                        "summary": node.summary or existing.summary,
-                        "tags": sorted(set(existing.tags).union(node.tags)),
-                        "metadata": {**existing.metadata, **node.metadata},
-                    }
-                )
-                return
-        self.graph.nodes.append(node)
+        if node.id in self._nodes_by_id:
+            existing = self._nodes_by_id[node.id]
+            existing.name = node.name or existing.name
+            existing.summary = node.summary or existing.summary
+            existing.tags = sorted(set(existing.tags).union(node.tags))
+            existing.metadata = {**existing.metadata, **node.metadata}
+        else:
+            self._nodes_by_id[node.id] = node
+            self.graph.nodes.append(node)
 
     def _upsert_edge(self, edge: GraphEdge) -> None:
-        if any(existing.id == edge.id for existing in self.graph.edges):
-            return
-        self.graph.edges.append(edge)
+        if edge.id in self._edges_by_id:
+            existing = self._edges_by_id[edge.id]
+            existing.summary = edge.summary or existing.summary
+            existing.weight = max(existing.weight, edge.weight)
+            existing.metadata = {**existing.metadata, **edge.metadata}
+        else:
+            self._edges_by_id[edge.id] = edge
+            self.graph.edges.append(edge)

@@ -17,11 +17,15 @@ class ResultRequest(BaseModel):
 
 @router.post("/results", status_code=202)
 def post_results(request: ResultRequest | None = None) -> dict[str, str]:
+    from backend.app.main import get_cached_graph, set_cached_graph
     request = request or ResultRequest()
     settings = get_settings()
-    if not settings.devonboard_graph_path.exists():
-        raise HTTPException(status_code=404, detail="No graph found. Run scan to get started.")
-    graph = GraphStore.load(settings.devonboard_graph_path).graph
+    graph = get_cached_graph()
+    if graph is None:
+        if not settings.devonboard_graph_path.exists():
+            raise HTTPException(status_code=404, detail="No graph found. Run scan to get started.")
+        graph = GraphStore.load(settings.devonboard_graph_path).graph
+        set_cached_graph(graph)
     run = ResultService(graph, results_dir=settings.results_dir).run(
         repo=request.repo,
         target_branch=request.target_branch,

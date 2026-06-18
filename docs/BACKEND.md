@@ -69,6 +69,7 @@ Commit-only ingest is a valid fallback.
 - file path lookup;
 - node history traversal;
 - optional SQLite index rebuild.
+- optional Qdrant vector index rebuild for semantic `file`, `module`, `source`, and `claim` lookup.
 
 `GraphQuery` owns:
 
@@ -76,6 +77,8 @@ Commit-only ingest is a valid fallback.
 - historical search;
 - hybrid traversal;
 - evidence ranking.
+
+Qdrant is a derived accelerator only. JSON graph data remains authoritative, and vector results must map back to `graph_node_id` before retrieval or synthesis uses them.
 
 ---
 

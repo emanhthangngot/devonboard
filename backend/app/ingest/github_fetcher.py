@@ -1,19 +1,26 @@
 import json
 import re
 import urllib.request
-from backend.app.graph.ids import edge_id, entity_id
+
+from backend.app.graph.ids import edge_id, entity_id, file_id, source_pr_id
 from backend.app.graph.models import GraphEdge, GraphNode, KnowledgeGraph
+
+GITHUB_PER_PAGE = 100
+GITHUB_MAX_PAGES = 10
 
 
 class GitHubFetcher:
-    def __init__(self, graph: KnowledgeGraph, token: str) -> None:
+    def __init__(self, graph: KnowledgeGraph, token: str, include_reviews: bool = True) -> None:
         self.graph = graph
         self.token = token
+        self.include_reviews = include_reviews
         self.headers = {
             "Authorization": f"token {self.token}",
             "User-Agent": "DevOnboard-App",
             "Accept": "application/vnd.github.v3+json",
         }
+        self._nodes_by_id = {node.id: node for node in self.graph.nodes}
+        self._edges_by_id = {edge.id: edge for edge in self.graph.edges}
 
     def enrich(self) -> None:
         if not self.graph.repo or not self.graph.repo.url:
@@ -27,19 +34,15 @@ class GitHubFetcher:
         owner, repo = match.groups()
 
         # 1. Fetch Pull Requests
-        prs = self._get(f"/repos/{owner}/{repo}/pulls?state=all&per_page=30")
-        if prs and isinstance(prs, list):
-            for pr in prs:
-                self._ingest_pr(owner, repo, pr)
+        for pr in self._get_paginated(f"/repos/{owner}/{repo}/pulls?state=all"):
+            self._ingest_pr(owner, repo, pr)
 
         # 2. Fetch Issues
-        issues = self._get(f"/repos/{owner}/{repo}/issues?state=all&per_page=30")
-        if issues and isinstance(issues, list):
-            for issue in issues:
-                # GitHub issues API returns PRs as well; check pull_request key
-                if "pull_request" in issue:
-                    continue
-                self._ingest_issue(issue)
+        for issue in self._get_paginated(f"/repos/{owner}/{repo}/issues?state=all"):
+            # GitHub issues API returns PRs as well; check pull_request key.
+            if "pull_request" in issue:
+                continue
+            self._ingest_issue(issue)
 
         # 3. Create cross-references (cites edges) from commit messages or PR text
         self._create_cross_references()
@@ -54,14 +57,39 @@ class GitHubFetcher:
             print(f"GitHub API request failed to {path}: {e}")
             return None
 
+    def _get_paginated(self, path: str, *, max_pages: int = GITHUB_MAX_PAGES) -> list[dict]:
+        items: list[dict] = []
+        separator = "&" if "?" in path else "?"
+        for page in range(1, max_pages + 1):
+            payload = self._get(
+                f"{path}{separator}per_page={GITHUB_PER_PAGE}&page={page}"
+            )
+            if not payload:
+                break
+            if not isinstance(payload, list):
+                break
+            items.extend(item for item in payload if isinstance(item, dict))
+            if len(payload) < GITHUB_PER_PAGE:
+                break
+        return items
+
     def _ingest_pr(self, owner: str, repo: str, pr: dict) -> None:
         number = pr.get("number")
         if not number:
             return
 
-        pr_node_id = f"source:pr:{number}"
+        pr_node_id = source_pr_id(number)
         user = pr.get("user", {}) or {}
         username = user.get("login", "unknown")
+
+        files = self._get_paginated(f"/repos/{owner}/{repo}/pulls/{number}/files")
+        touched_files = sorted(
+            {
+                filename
+                for item in files
+                if isinstance(filename := item.get("filename"), str) and filename
+            }
+        )
 
         pr_node = GraphNode(
             id=pr_node_id,
@@ -76,6 +104,7 @@ class GitHubFetcher:
                 "url": pr.get("html_url"),
                 "date": pr.get("created_at"),
                 "author": username,
+                "filesTouched": touched_files,
             },
         )
         self._upsert_node(pr_node)
@@ -109,7 +138,7 @@ class GitHubFetcher:
         if merge_commit_sha:
             commit_node_id = f"source:commit:{merge_commit_sha}"
             # Check if this commit node exists in our graph
-            if any(n.id == commit_node_id for n in self.graph.nodes):
+            if self._has_node(commit_node_id):
                 self._upsert_edge(
                     GraphEdge(
                         id=edge_id(pr_node_id, commit_node_id, "builds_on"),
@@ -122,9 +151,23 @@ class GitHubFetcher:
                 )
 
         # Fetch and ingest reviews for this PR
-        reviews = self._get(f"/repos/{owner}/{repo}/pulls/{number}/reviews")
-        if reviews and isinstance(reviews, list):
-            for review in reviews:
+        for filename in touched_files:
+            target_file_id = file_id(filename)
+            if not self._has_node(target_file_id):
+                continue
+            self._upsert_edge(
+                GraphEdge(
+                    id=edge_id(target_file_id, pr_node_id, "cites"),
+                    source=target_file_id,
+                    target=pr_node_id,
+                    type="cites",
+                    summary=f"File modified in PR #{number}.",
+                    weight=1.0,
+                )
+            )
+
+        if self.include_reviews:
+            for review in self._get_paginated(f"/repos/{owner}/{repo}/pulls/{number}/reviews"):
                 self._ingest_review(pr_node_id, number, review)
 
     def _ingest_review(self, pr_node_id: str, pr_number: int, review: dict) -> None:
@@ -251,7 +294,7 @@ class GitHubFetcher:
             mentions = re.findall(r"#(\d+)", text_to_search)
             for num in set(mentions):
                 # Try PR first
-                target_id = f"source:pr:{num}"
+                target_id = source_pr_id(num)
                 if target_id not in issue_ids:
                     target_id = f"source:issue:{num}"
 
@@ -268,20 +311,27 @@ class GitHubFetcher:
                     )
 
     def _upsert_node(self, node: GraphNode) -> None:
-        for index, existing in enumerate(self.graph.nodes):
-            if existing.id == node.id:
-                self.graph.nodes[index] = existing.model_copy(
-                    update={
-                        "name": node.name or existing.name,
-                        "summary": node.summary or existing.summary,
-                        "tags": sorted(set(existing.tags).union(node.tags)),
-                        "metadata": {**existing.metadata, **node.metadata},
-                    }
-                )
-                return
+        if node.id in self._nodes_by_id:
+            existing = self._nodes_by_id[node.id]
+            existing.name = node.name or existing.name
+            existing.summary = node.summary or existing.summary
+            existing.tags = sorted(set(existing.tags).union(node.tags))
+            existing.file_path = node.file_path or existing.file_path
+            existing.line_range = node.line_range or existing.line_range
+            existing.metadata = {**existing.metadata, **node.metadata}
+            return
+        self._nodes_by_id[node.id] = node
         self.graph.nodes.append(node)
 
     def _upsert_edge(self, edge: GraphEdge) -> None:
-        if any(existing.id == edge.id for existing in self.graph.edges):
+        if edge.id in self._edges_by_id:
+            existing = self._edges_by_id[edge.id]
+            existing.summary = edge.summary or existing.summary
+            existing.weight = max(existing.weight, edge.weight)
+            existing.metadata = {**existing.metadata, **edge.metadata}
             return
+        self._edges_by_id[edge.id] = edge
         self.graph.edges.append(edge)
+
+    def _has_node(self, node_id: str) -> bool:
+        return node_id in self._nodes_by_id

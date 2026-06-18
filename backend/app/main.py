@@ -3,12 +3,27 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.config import get_settings
 from backend.app.graph.graph_store import GraphStore
+from backend.app.graph.models import KnowledgeGraph
 from backend.app.routers.evidence_packs import router as evidence_packs_router
 from backend.app.routers.graph import router as graph_router
 from backend.app.routers.ingest import router as ingest_router
 from backend.app.routers.query import router as query_router
 from backend.app.routers.results import router as results_router
 from backend.app.routers.scan import router as scan_router
+from backend.app.services.vector_index import VectorIndexService
+
+_graph_cache: KnowledgeGraph | None = None
+
+def get_cached_graph() -> KnowledgeGraph | None:
+    return _graph_cache
+
+def set_cached_graph(graph: KnowledgeGraph) -> None:
+    global _graph_cache
+    _graph_cache = graph
+
+def invalidate_graph_cache() -> None:
+    global _graph_cache
+    _graph_cache = None
 
 app = FastAPI(
     title="DevOnboard API",
@@ -43,15 +58,38 @@ app.include_router(results_router)
 def health() -> dict[str, object]:
     settings = get_settings()
     graph_repo = None
-    if settings.devonboard_graph_path.exists():
+    graph = get_cached_graph()
+    if graph is not None:
+        graph_repo = graph.repo.model_dump()
+    elif settings.devonboard_graph_path.exists():
         try:
-            graph_repo = GraphStore.load(settings.devonboard_graph_path).graph.repo.model_dump()
+            graph = GraphStore.load(settings.devonboard_graph_path).graph
+            set_cached_graph(graph)
+            graph_repo = graph.repo.model_dump()
         except Exception:
             graph_repo = None
+    vector_service = VectorIndexService.from_settings()
+    qdrant_status = (
+        vector_service.status()
+        if vector_service is not None
+        else {
+            "configured": bool(settings.qdrant_url),
+            "integrated": True,
+            "reachable": False,
+            "url": settings.qdrant_url if settings.qdrant_url else None,
+            "collection": settings.qdrant_collection,
+            "reason": "Qdrant URL or Gemini API key is not configured.",
+        }
+    )
     return {
         "status": "ok",
         "graph_exists": settings.devonboard_graph_path.exists(),
-        "qdrant": bool(settings.qdrant_url),
+        "qdrant": qdrant_status,
+        "embedding": {
+            "model": settings.embedding_model,
+            "dimensions": settings.embedding_dimensions,
+            "batch_size": settings.embedding_batch_size,
+        },
         "llm_available": bool(settings.gemini_api_key),
         "target_repo": {
             "path": str(settings.target_repo_path),
